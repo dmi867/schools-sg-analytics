@@ -2,11 +2,20 @@
 
 Интерактивный отчёт по связи СГ и выплат.
 
+**Онлайн:** https://dmi867.github.io/schools-sg-analytics/
+
+Исходные Excel-файлы в репозиторий не загружаются — только готовая страница.
+
 ## Обновить отчёт
 
 ```bash
 python3 build_html.py
+git add index.html sg-pay-analysis.html
+git commit -m "Update analytics"
+git push
 ```
+
+После push страница обновится через 1–2 минуты.
 
 ## Локально
 
