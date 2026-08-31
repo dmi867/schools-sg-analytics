@@ -164,17 +164,17 @@ def build_flags(last, info, exp, smr, rs, ctr):
     sg_pay_gap = round(last["fact"] - pay_pct, 1) if pay_pct is not None else None
 
     if sg_pay_gap is not None and sg_pay_gap > 15:
-        flags.append("СГ >> выплаты")
+        flags.append("готовность выше выплат")
     if sg_plan_gap is not None and sg_plan_gap < -5:
-        flags.append("СГ < план")
+        flags.append("отстаёт от плана")
     if smr.get("fact_start") and exp.get("plan_end") and smr["fact_start"] < exp["plan_end"]:
-        flags.append("СМР до экспертизы")
+        flags.append("стройка до экспертизы")
     if info.get("exp_done") and exp.get("plan_end") and info["exp_done"] < exp["plan_end"]:
-        flags.append("экспертиза раньше плана КСГ")
+        flags.append("экспертиза не бьётся с КСГ")
     if smr.get("fact_start") and ctr.get("fact_start") and smr["fact_start"] < ctr["fact_start"]:
-        flags.append("СМР до контракта")
+        flags.append("стройка до контракта")
     if rs.get("plan_end") and rs.get("fact_end") and rs["fact_end"] > rs["plan_end"]:
-        flags.append("РС с опозданием")
+        flags.append("РС опоздал")
     elif not rs and smr.get("fact_start") and not info.get("exp_done"):
         flags.append("нет заключения экспертизы")
 
@@ -356,8 +356,8 @@ def load_data():
             "n_sg_behind_plan": sum(
                 1 for p in per if p.get("sg_plan_gap") is not None and p["sg_plan_gap"] < -5
             ),
-            "n_smr_before_exp": sum(1 for p in per if "СМР до экспертизы" in p.get("flags", [])),
-            "n_kt_issues": sum(1 for p in per if any(f in p.get("flags", []) for f in ("СМР до экспертизы", "экспертиза раньше плана КСГ", "РС с опозданием", "нет заключения экспертизы"))),
+            "n_smr_before_exp": sum(1 for p in per if "стройка до экспертизы" in p.get("flags", [])),
+            "n_kt_issues": sum(1 for p in per if any(f in p.get("flags", []) for f in ("стройка до экспертизы", "экспертиза не бьётся с КСГ", "РС опоздал", "нет заключения экспертизы"))),
             "has_rs_kt": has_rs_kt,
         },
         "attention": [
@@ -388,7 +388,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>СГ план/факт и выплаты — 47 школ</title>
+<title>СГ и выплаты — 47 школ</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <style>
   :root { --bg:#f4f3ef; --surface:#fff; --text:#1c1c1c; --muted:#555; --faint:#888;
@@ -439,52 +439,51 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 </head>
 <body>
 <div class="wrap">
-  <h1>СГ план / факт и выплаты</h1>
-  <p class="sub">47 школ · август 2026 · разрывы по графикам и КТ из Акцент</p>
+  <h1>СГ и выплаты</h1>
+  <p class="sub">47 школ, август 2026</p>
 
   <ul class="brief">
-    <li><strong>СГ факт vs план</strong> — у <span id="b1"></span> школ факт ниже плана на &gt;5 п.п.</li>
-    <li><strong>СГ vs выплаты</strong> — у <span id="b2"></span> школ готовность сильно выше оплаченного.</li>
-    <li><strong>КТ «экспертиза»</strong> — у <span id="b3"></span> школ СМР стартовали до плановой даты экспертизы.</li>
-    <li><strong>КТ «РС»</strong> — в КСГ школ отдельной процедуры нет; смотрим контракт → СМР.</li>
+    <li>У <span id="b1"></span> школ готовность ниже плана больше чем на 5 п.п.</li>
+    <li>У <span id="b2"></span> школ готовность заметно выше того, что уже заплатили.</li>
+    <li>У <span id="b3"></span> школ стройка началась раньше, чем в КСГ стоит экспертиза.</li>
+    <li>Про РС: в КСГ по школам такой точки нет, смотрим контракт и экспертизу.</li>
   </ul>
 
   <div class="kpis four">
-    <div class="kpi"><div class="n" id="k1"></div><div class="l">СГ сильно выше выплат</div></div>
-    <div class="kpi"><div class="n" id="k2"></div><div class="l">типичный разрыв СГ − выплаты, п.п.</div></div>
-    <div class="kpi"><div class="n" id="k4"></div><div class="l">СГ факт ниже плана</div></div>
-    <div class="kpi"><div class="n" id="k5"></div><div class="l">СМР до экспертизы (план КСГ)</div></div>
+    <div class="kpi"><div class="n" id="k1"></div><div class="l">готовность выше выплат</div></div>
+    <div class="kpi"><div class="n" id="k2"></div><div class="l">обычный разрыв, п.п.</div></div>
+    <div class="kpi"><div class="n" id="k4"></div><div class="l">факт ниже плана</div></div>
+    <div class="kpi"><div class="n" id="k5"></div><div class="l">стройка до экспертизы</div></div>
   </div>
 
   <div class="box mini">
-    <strong style="display:block;margin-bottom:8px">Разрывы по КТ и выплатам</strong>
-    <p class="note" style="margin-top:0">Школы с наибольшим числом сигналов.</p>
+    <strong style="display:block;margin-bottom:8px">Кого смотреть первым</strong>
     <table>
-      <thead><tr><th>Школа</th><th class="r">СГ</th><th class="r">План</th><th class="r">Выпл.</th><th>Разрывы</th></tr></thead>
+      <thead><tr><th>Школа</th><th class="r">СГ</th><th class="r">План</th><th class="r">Выпл.</th><th>Что не так</th></tr></thead>
       <tbody id="ktAttn"></tbody>
     </table>
   </div>
 
   <div class="box">
-    <strong style="display:block;margin-bottom:8px">СГ факт vs выплаты (между школами)</strong>
+    <strong style="display:block;margin-bottom:8px">Готовность и выплаты по школам</strong>
     <div class="chart-sm"><canvas id="cMini"></canvas></div>
-    <p class="note">Связь между школами: <span id="k3"></span> (0 = нет, 1 = сильная).</p>
+    <p class="note">Связь слабая: <span id="k3"></span> (чем ближе к 0, тем слабее).</p>
   </div>
 
   <details id="secCharts">
-    <summary>Графики: СГ план, СГ факт, выплаты</summary>
+    <summary>Графики по школе</summary>
     <div class="detail-body">
       <div class="cols2" style="margin-top:14px">
         <div>
-          <strong>СГ факт vs выплаты</strong>
+          <strong>Готовность и выплаты</strong>
           <div class="chart"><canvas id="cScatter"></canvas></div>
         </div>
         <div>
-          <strong>Средняя СГ по группам выплат</strong>
+          <strong>Средняя СГ в группах по выплатам</strong>
           <div class="chart"><canvas id="cBins"></canvas></div>
         </div>
       </div>
-      <strong>Одна школа — три линии</strong>
+      <strong>Одна школа</strong>
       <div class="row">
         <select id="selSchool"></select>
         <span class="tag" id="tagR"></span>
@@ -492,19 +491,19 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       </div>
       <div class="chart"><canvas id="cTraj"></canvas></div>
       <p class="note" id="ktLine"></p>
-      <p class="note">Синяя — СГ факт, пунктир — СГ план, зелёная — выплаты (к 100 для сравнения формы).</p>
+      <p class="note">Синяя — факт, пунктир — план, зелёная — выплаты (приведены к одной шкале).</p>
     </div>
   </details>
 
   <details id="secKt">
-    <summary>Таблица разрывов и дат КТ</summary>
+    <summary>Все школы: даты и разрывы</summary>
     <div class="detail-body">
       <div class="tbl-wrap">
         <table class="full">
           <thead><tr>
-            <th>Школа</th><th class="r">СГ факт</th><th class="r">СГ план</th><th class="r">Δ план</th>
-            <th class="r">% выплат</th><th class="r">Δ выпл</th>
-            <th>Экспертиза</th><th>СМР старт</th><th>Контракт</th><th>Разрывы</th>
+            <th>Школа</th><th class="r">Факт</th><th class="r">План</th><th class="r">Δ</th>
+            <th class="r">Выпл.</th><th class="r">Δ</th>
+            <th>Экспертиза</th><th>Старт СМР</th><th>Контракт</th><th>Замечания</th>
           </tr></thead>
           <tbody id="ktTbl"></tbody>
         </table>
@@ -514,13 +513,13 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   </details>
 
   <details id="secTable">
-    <summary>Таблица всех школ (кратко)</summary>
+    <summary>Краткая таблица</summary>
     <div class="detail-body">
       <div class="tbl-wrap">
         <table class="full">
           <thead><tr>
-            <th>Школа</th><th class="r">СГ</th><th class="r">План</th><th class="r">% выплат</th>
-            <th class="r">Разрыв</th><th class="r">Вместе</th>
+            <th>Школа</th><th class="r">СГ</th><th class="r">План</th><th class="r">Выпл.</th>
+            <th class="r">Разрыв</th><th class="r">Сходятся</th>
           </tr></thead>
           <tbody id="tbl"></tbody>
         </table>
@@ -529,15 +528,15 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   </details>
 
   <details id="secContext">
-    <summary>Как читать разрывы</summary>
+    <summary>Если коротко</summary>
     <div class="detail-body">
       <ul class="brief" style="margin-top:14px">
-        <li><strong>СГ &gt; выплаты</strong> — работы идут, оплата ждёт приёмку документов.</li>
-        <li><strong>СГ &lt; план</strong> — объект отстаёт от графика стройки.</li>
-        <li><strong>СМР до экспертизы</strong> — стройка началась раньше плановой даты КТ «экспертиза» в КСГ.</li>
-        <li><strong>РС</strong> — в выгрузке КСГ для школ нет процедуры «Получение РС»; контроль через контракт и экспертизу.</li>
+        <li>Готовность и деньги считаются отдельно — высокая СГ при 30% выплат это нормально.</li>
+        <li>Деньги идут после приёмки, не по цифре с мониторинга.</li>
+        <li>«Стройка до экспертизы» — в КСГ экспертиза позже, а СМР уже идут.</li>
+        <li>РС в этой выгрузке по школам не выделен.</li>
       </ul>
-      <p class="note">Источники: СГ и платежи, 2408 Simple List, 1708 КСГ+Экспертиза.</p>
+      <p class="note">Данные: файлы СГ, платежи, Simple List, КСГ+Экспертиза.</p>
     </div>
   </details>
 </div>
@@ -548,7 +547,7 @@ const charts = { mini:false, scatter:false, bins:false, traj:false };
 
 function flagsHtml(arr) {
   if(!arr||!arr.length) return '—';
-  return arr.map(f=>'<span class="flag'+(f.includes('СМР')||f.includes('эксперт')?' warn':'')+'">'+f+'</span>').join('');
+  return arr.map(f=>'<span class="flag'+(f.includes('стройка')||f.includes('эксперт')?' warn':'')+'">'+f+'</span>').join('');
 }
 
 document.getElementById('k1').textContent = DATA.stats.n_sg_ahead + ' из ' + DATA.stats.n;
@@ -572,8 +571,8 @@ document.getElementById('ktTbl').innerHTML = [...DATA.per].sort((a,b)=>(b.flags?
 }).join('');
 
 document.getElementById('rsNote').textContent = DATA.stats.has_rs_kt
-  ? 'КТ «Получение РС» найдена в КСГ.'
-  : 'КТ «Получение РС» в КСГ школ отсутствует — используем даты контракта и экспертизы из Акцент.';
+  ? 'В КСГ есть «Получение РС».'
+  : '«Получение РС» в КСГ по школам нет — смотрим контракт и экспертизу.';
 
 document.getElementById('tbl').innerHTML = DATA.per.map(p => {
   const gap = p.pct!=null ? (p.sg-p.pct).toFixed(0) : '—';
@@ -583,7 +582,7 @@ document.getElementById('tbl').innerHTML = DATA.per.map(p => {
 const sel = document.getElementById('selSchool');
 DATA.per.filter(p=>p.vary).forEach(p=>{
   const o=document.createElement('option'); o.value=p.uin;
-  o.textContent=p.name + (p.flags?.length ? ' ⚠' : ''); sel.appendChild(o);
+  o.textContent=p.name + (p.flags?.length ? ' *' : ''); sel.appendChild(o);
 });
 sel.value = DATA.defaultUin;
 let chartTraj;
@@ -591,12 +590,12 @@ let chartTraj;
 function drawTraj(uin) {
   const rows = DATA.traj[uin]||[], m = DATA.per.find(p=>p.uin===uin), maxP = Math.max(...rows.map(r=>r.pay),1);
   const k = DATA.kt_dates[uin]||{};
-  document.getElementById('tagR').textContent = m&&m.r!=null ? 'вместе '+m.r.toFixed(2) : '';
-  document.getElementById('metaSchool').textContent = m ? `${m.name} · факт ${m.sg}% / план ${m.plan??'—'}% / выплаты ${m.pct??'—'}%` : '';
-  document.getElementById('ktLine').textContent = `КТ: экспертиза ${k.exp_sl||k.exp_plan||'—'} · СМР ${k.smr_start||'—'} · контракт ${k.ctr_fact||'—'}` + (m&&m.flags?.length ? ' · '+m.flags.join(', ') : '');
+  document.getElementById('tagR').textContent = m&&m.r!=null ? 'корр. '+m.r.toFixed(2) : '';
+  document.getElementById('metaSchool').textContent = m ? `${m.name}: ${m.sg}% факт, ${m.plan??'—'}% план, ${m.pct??'—'}% выпл.` : '';
+  document.getElementById('ktLine').textContent = `Экспертиза ${k.exp_sl||k.exp_plan||'—'}, СМР с ${k.smr_start||'—'}, контракт ${k.ctr_fact||'—'}` + (m&&m.flags?.length ? '. '+m.flags.join(', ') : '');
   const cfg = { type:'line', data:{ labels:rows.map(r=>r.d), datasets:[
-    { label:'СГ факт', data:rows.map(r=>r.sg), borderColor:blue, tension:.25, pointRadius:2 },
-    { label:'СГ план', data:rows.map(r=>r.plan), borderColor:blue, borderDash:[5,4], tension:.25, pointRadius:0 },
+    { label:'Факт', data:rows.map(r=>r.sg), borderColor:blue, tension:.25, pointRadius:2 },
+    { label:'План', data:rows.map(r=>r.plan), borderColor:blue, borderDash:[5,4], tension:.25, pointRadius:0 },
     { label:'Выплаты', data:rows.map(r=>Math.round(r.pay/maxP*100)), borderColor:green, tension:.25, pointRadius:2 }
   ]}, options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}}, scales:{ y:{min:0,max:105} } } };
   if(chartTraj) chartTraj.destroy(); chartTraj = new Chart(document.getElementById('cTraj'), cfg);
@@ -610,7 +609,7 @@ function initMini() {
     type:'scatter',
     data:{ datasets:[{ data:pts.map(s=>({x:s.pct,y:s.sg})), backgroundColor:'rgba(26,77,122,.7)', pointRadius:4 }] },
     options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}, tooltip:{callbacks:{label:c=>`выплаты ${c.raw.x}%, СГ ${c.raw.y}%`}}},
-      scales:{ x:{title:{display:true,text:'% выплат'},min:20,max:100,ticks:{maxTicksLimit:5}}, y:{title:{display:true,text:'СГ %'},min:70,max:105,ticks:{maxTicksLimit:5}} } }
+      scales:{ x:{title:{display:true,text:'Выплаты, %'},min:20,max:100,ticks:{maxTicksLimit:5}}, y:{title:{display:true,text:'СГ, %'},min:70,max:105,ticks:{maxTicksLimit:5}} } }
   });
 }
 
@@ -626,7 +625,7 @@ function initDetailCharts() {
       { label:'Тренд', data:line, type:'line', borderColor:blue, borderDash:[5,4], pointRadius:0 }
     ]},
     options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}},
-      scales:{ x:{title:{display:true,text:'% выплат'},min:20,max:100}, y:{title:{display:true,text:'СГ %'},min:70,max:105} } }
+      scales:{ x:{title:{display:true,text:'Выплаты, %'},min:20,max:100}, y:{title:{display:true,text:'СГ, %'},min:70,max:105} } }
   });
   new Chart(document.getElementById('cBins'), {
     type:'bar',
