@@ -83,31 +83,121 @@ def linreg(xs, ys):
     return a, b, 1 - ss_res / ss_tot if ss_tot else 0
 
 
-def load_data():
-    wb_sl = openpyxl.load_workbook(ROOT / "2408_Акцент_Simple List.xlsx", data_only=True)
-    ws = wb_sl.active
+def fmt_date(d):
+    return d.strftime("%d.%m.%y") if d else None
+
+
+def kt_bounds(items):
+    if not items:
+        return {}
+    return {
+        "plan_start": min((x["ps"] for x in items if x["ps"]), default=None),
+        "plan_end": max((x["pe"] for x in items if x["pe"]), default=None),
+        "fact_start": min((x["fs"] for x in items if x["fs"]), default=None),
+        "fact_end": max((x["fe"] for x in items if x["fe"]), default=None),
+    }
+
+
+def load_ksg():
+    path = ROOT / "1708_КСГ+Экспертиза.xlsx"
+    if not path.exists():
+        return {}
+    wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    ws = wb.active
+    headers = list(next(ws.iter_rows(min_row=1, max_row=1, values_only=True)))
+    col = {h: i for i, h in enumerate(headers)}
+    kt = {}
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        uin = row[col["УИН"]]
+        if not uin:
+            continue
+        proc = row[col["Процедура КСГ"]]
+        kt.setdefault(uin, {}).setdefault(proc, []).append(
+            {
+                "ps": parse_date(row[col["Дата начала план"]]),
+                "pe": parse_date(row[col["Дата окончания план"]]),
+                "fs": parse_date(row[col["Дата начала факт"]]),
+                "fe": parse_date(row[col["Дата окончания факт"]]),
+            }
+        )
+    wb.close()
+    return kt
+
+
+def load_simple_list():
+    wb = openpyxl.load_workbook(ROOT / "2408_Акцент_Simple List.xlsx", data_only=True)
+    ws = wb.active
     headers = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
     col = {h: i for i, h in enumerate(headers)}
     sl = {}
-    pay_pct_by_uin = {}
     for row in ws.iter_rows(min_row=2, values_only=True):
         uin = row[col["Код УИН"]]
-        if uin and uin not in sl:
-            sl[uin] = row[col["Название объекта"]]
-            v = row[col["Процент выплат"]]
-            if v is not None:
-                try:
-                    pay_pct_by_uin[uin] = round(float(str(v).replace(",", ".")), 1)
-                except ValueError:
-                    pass
+        if not uin:
+            continue
+        yr = row[col["Год финансирования"]]
+        if uin in sl and yr and str(yr).isdigit() and int(yr) <= int(sl[uin].get("yr") or 0):
+            continue
+        pay_pct = None
+        v = row[col["Процент выплат"]]
+        if v is not None:
+            try:
+                pay_pct = round(float(str(v).replace(",", ".")), 1)
+            except ValueError:
+                pass
+        sl[uin] = {
+            "yr": yr,
+            "name": row[col["Название объекта"]],
+            "pay_pct": pay_pct,
+            "exp_in": parse_date(row[col["Дата подачи заявления (захода) на экспертизу"]]),
+            "exp_start": parse_date(row[col["Дата начала экспертизы"]]),
+            "exp_done": parse_date(row[col["Дата получения заключения (завершения ) экспертизы"]]),
+            "ctr_plan": parse_date(row[col["Заключение контракта начало план КСГ"]]),
+            "ctr_fact": parse_date(row[col["Заключение контракта начало факт КСГ"]]),
+        }
+    return sl
 
-    cross, per, traj = [], [], {}
+
+def build_flags(last, info, exp, smr, rs, ctr):
+    flags = []
+    sg_plan_gap = round(last["fact"] - last["plan"], 1) if last["plan"] is not None else None
+    pay_pct = info.get("pay_pct")
+    sg_pay_gap = round(last["fact"] - pay_pct, 1) if pay_pct is not None else None
+
+    if sg_pay_gap is not None and sg_pay_gap > 15:
+        flags.append("СГ >> выплаты")
+    if sg_plan_gap is not None and sg_plan_gap < -5:
+        flags.append("СГ < план")
+    if smr.get("fact_start") and exp.get("plan_end") and smr["fact_start"] < exp["plan_end"]:
+        flags.append("СМР до экспертизы")
+    if info.get("exp_done") and exp.get("plan_end") and info["exp_done"] < exp["plan_end"]:
+        flags.append("экспертиза раньше плана КСГ")
+    if smr.get("fact_start") and ctr.get("fact_start") and smr["fact_start"] < ctr["fact_start"]:
+        flags.append("СМР до контракта")
+    if rs.get("plan_end") and rs.get("fact_end") and rs["fact_end"] > rs["plan_end"]:
+        flags.append("РС с опозданием")
+    elif not rs and smr.get("fact_start") and not info.get("exp_done"):
+        flags.append("нет заключения экспертизы")
+
+    return flags, sg_plan_gap, sg_pay_gap
+
+
+def load_data():
+    sl = load_simple_list()
+    ksg = load_ksg()
+
+    cross, per, traj, kt_rows, kt_dates = [], [], {}, [], {}
 
     for f in sorted(ROOT.glob("*.xlsx")):
-        if "_платежи" in f.name or "Акцент" in f.name or "Simple" in f.name:
+        if (
+            "_платежи" in f.name
+            or "Акцент" in f.name
+            or "Simple" in f.name
+            or "КСГ" in f.name
+        ):
             continue
         uin = f.stem
-        name = sl.get(uin, uin)
+        info = sl.get(uin, {})
+        name = info.get("name", uin)
         wb = openpyxl.load_workbook(f, data_only=True)
         series = []
         for row in wb.active.iter_rows(min_row=2, values_only=True):
@@ -138,6 +228,7 @@ def load_data():
         pays.sort(key=lambda x: x["d"])
         total = sum(p["amt"] for p in pays)
         last = series[-1]
+        pay_pct = info.get("pay_pct")
 
         cum = 0
         pi = 0
@@ -150,6 +241,7 @@ def load_data():
                 {
                     "d": pt["d"].strftime("%d.%m.%y"),
                     "sg": round(pt["fact"], 1),
+                    "plan": round(pt["plan"], 1) if pt["plan"] is not None else None,
                     "pay": round(cum / 1e6, 1),
                 }
             )
@@ -158,12 +250,43 @@ def load_data():
             pts = pts[::step][:-1] + [pts[-1]]
         traj[uin] = pts
 
-        pay_pct = pay_pct_by_uin.get(uin)
         pays_t = [p["pay"] for p in pts]
         vary = max(pays_t) - min(pays_t) >= 0.01
         r = None
         if vary and len(pts) >= 5:
             r = corr([p["sg"] for p in pts], pays_t)
+
+        uin_kt = ksg.get(uin, {})
+        exp = kt_bounds(uin_kt.get("Экспертиза", []))
+        smr = kt_bounds(uin_kt.get("СМР", []))
+        ctr = kt_bounds(uin_kt.get("Заключение контракта 1", []))
+        rs = kt_bounds(uin_kt.get("Получение РС", []))
+        flags, sg_plan_gap, sg_pay_gap = build_flags(last, info, exp, smr, rs, ctr)
+
+        kt_dates[uin] = {
+            "exp_plan": fmt_date(exp.get("plan_end")),
+            "exp_fact": fmt_date(exp.get("fact_end")),
+            "exp_sl": fmt_date(info.get("exp_done")),
+            "smr_start": fmt_date(smr.get("fact_start")),
+            "ctr_fact": fmt_date(ctr.get("fact_start") or info.get("ctr_fact")),
+            "rs_plan": fmt_date(rs.get("plan_end")),
+            "rs_fact": fmt_date(rs.get("fact_end")),
+        }
+
+        kt_rows.append(
+            {
+                "uin": uin,
+                "name": short(name),
+                "full": name,
+                "sg": round(last["fact"], 1),
+                "plan": round(last["plan"], 1) if last["plan"] is not None else None,
+                "sg_plan_gap": sg_plan_gap,
+                "pct": pay_pct,
+                "sg_pay_gap": sg_pay_gap,
+                "flags": flags,
+                "flag_n": len(flags),
+            }
+        )
 
         cross.append(
             {
@@ -173,7 +296,7 @@ def load_data():
                 "sg": round(last["fact"], 1),
                 "pct": pay_pct,
                 "pay": round(total / 1e6, 1),
-                "gap": round(last["fact"] - pay_pct, 1) if pay_pct is not None else None,
+                "gap": sg_pay_gap,
             }
         )
         per.append(
@@ -181,11 +304,14 @@ def load_data():
                 "uin": uin,
                 "name": short(name),
                 "sg": round(last["fact"], 1),
+                "plan": round(last["plan"], 1) if last["plan"] is not None else None,
+                "sg_plan_gap": sg_plan_gap,
                 "pct": pay_pct,
                 "pay": round(total / 1e6, 1),
                 "r": round(r, 3) if r is not None else None,
                 "vary": vary,
                 "n": len(series),
+                "flags": flags,
             }
         )
 
@@ -195,7 +321,7 @@ def load_data():
     a, b, r2 = linreg(pcts, facts)
     varying = [p for p in per if p["vary"] and p["r"] is not None]
     varying.sort(key=lambda x: -(x["r"] or -1))
-    rs = [p["r"] for p in varying]
+    rs_corr = [p["r"] for p in varying]
 
     bins = []
     for lo, hi in [(0, 40), (40, 60), (60, 80), (80, 101)]:
@@ -214,16 +340,25 @@ def load_data():
         [s for s in cross if s["gap"] is not None],
         key=lambda x: -x["gap"],
     )
+    kt_sorted = sorted(kt_rows, key=lambda x: (-x["flag_n"], -(x["sg_pay_gap"] or 0)))
+
+    has_rs_kt = any(kt_dates[u].get("rs_plan") or kt_dates[u].get("rs_fact") for u in kt_dates)
 
     return {
         "stats": {
             "n": len(valid),
             "pearson_sg_pay_pct": round(corr(facts, pcts), 3),
             "spearman_sg_pay_pct": round(spearman(facts, pcts), 3),
-            "median_r": round(sorted(rs)[len(rs) // 2], 3) if rs else 0,
+            "median_r": round(sorted(rs_corr)[len(rs_corr) // 2], 3) if rs_corr else 0,
             "n_varying": len(varying),
             "n_sg_ahead": sum(1 for g in gaps if g > 15),
             "median_gap": round(sorted(gaps)[len(gaps) // 2], 1) if gaps else 0,
+            "n_sg_behind_plan": sum(
+                1 for p in per if p.get("sg_plan_gap") is not None and p["sg_plan_gap"] < -5
+            ),
+            "n_smr_before_exp": sum(1 for p in per if "СМР до экспертизы" in p.get("flags", [])),
+            "n_kt_issues": sum(1 for p in per if any(f in p.get("flags", []) for f in ("СМР до экспертизы", "экспертиза раньше плана КСГ", "РС с опозданием", "нет заключения экспертизы"))),
+            "has_rs_kt": has_rs_kt,
         },
         "attention": [
             {
@@ -232,14 +367,17 @@ def load_data():
                 "sg": s["sg"],
                 "pct": s["pct"],
                 "gap": s["gap"],
+                "flags": next((k["flags"] for k in kt_rows if k["name"] == s["name"]), []),
             }
             for s in gaps_sorted[:8]
         ],
+        "kt_attention": kt_sorted[:10],
         "reg": {"a": round(a, 1), "b": round(b, 4), "r2": round(r2, 3)},
         "bins": bins,
         "cross": cross,
         "per": sorted(per, key=lambda x: -(x["r"] if x["r"] is not None else -1)),
         "traj": traj,
+        "kt_dates": kt_dates,
         "top12": varying[:12],
         "defaultUin": varying[0]["uin"] if varying else per[0]["uin"],
     }
@@ -250,7 +388,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>СГ и выплаты — 47 школ</title>
+<title>СГ план/факт и выплаты — 47 школ</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <style>
   :root { --bg:#f4f3ef; --surface:#fff; --text:#1c1c1c; --muted:#555; --faint:#888;
@@ -292,47 +430,53 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   table.full th { background:#eeebe4; position:sticky; top:0; text-align:left }
   table.full td.r,table.full th.r { text-align:right; font-variant-numeric:tabular-nums }
   .tbl-wrap { max-height:420px; overflow:auto; border:1px solid var(--line); border-radius:4px; margin-top:10px }
-  @media(max-width:700px) { .kpis,.cols2 { grid-template-columns:1fr } }
+  .flag { font-size:.72rem; padding:2px 7px; margin:1px 2px 1px 0; display:inline-block; background:#faf3e6; border:1px solid #e0c88a; border-radius:4px; color:#7a5a12 }
+  .flag.warn { background:#fdecea; border-color:#e8a8a0; color:#8a2a22 }
+  .kpis.four { grid-template-columns:repeat(4,1fr) }
+  @media(max-width:900px) { .kpis.four { grid-template-columns:repeat(2,1fr) } }
+  @media(max-width:700px) { .kpis,.kpis.four,.cols2 { grid-template-columns:1fr } }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>Стройготовность и выплаты</h1>
-  <p class="sub">47 школ · август 2026</p>
+  <h1>СГ план / факт и выплаты</h1>
+  <p class="sub">47 школ · август 2026 · разрывы по графикам и КТ из Акцент</p>
 
   <ul class="brief">
-    <li><strong>Между школами</strong> — связи почти нет: больше выплат ≠ выше готовность.</li>
-    <li><strong>Внутри школы</strong> — графики часто идут рядом (стройка и оплата по ходу).</li>
-    <li><strong>Платят не по СГ</strong>, а после приёмки работ и документов.</li>
+    <li><strong>СГ факт vs план</strong> — у <span id="b1"></span> школ факт ниже плана на &gt;5 п.п.</li>
+    <li><strong>СГ vs выплаты</strong> — у <span id="b2"></span> школ готовность сильно выше оплаченного.</li>
+    <li><strong>КТ «экспертиза»</strong> — у <span id="b3"></span> школ СМР стартовали до плановой даты экспертизы.</li>
+    <li><strong>КТ «РС»</strong> — в КСГ школ отдельной процедуры нет; смотрим контракт → СМР.</li>
   </ul>
 
-  <div class="kpis">
-    <div class="kpi"><div class="n" id="k1"></div><div class="l">школ, где готовность сильно выше выплат</div></div>
-    <div class="kpi"><div class="n" id="k2"></div><div class="l">типичный разрыв (СГ − % выплат), п.п.</div></div>
-    <div class="kpi"><div class="n" id="k3"></div><div class="l">связь между школами (0–1)</div></div>
-  </div>
-
-  <div class="box">
-    <strong style="display:block;margin-bottom:8px">Общая картина</strong>
-    <div class="chart-sm"><canvas id="cMini"></canvas></div>
-    <p class="note">Каждая точка — школа. Точки разбросаны → прямой зависимости нет.</p>
+  <div class="kpis four">
+    <div class="kpi"><div class="n" id="k1"></div><div class="l">СГ сильно выше выплат</div></div>
+    <div class="kpi"><div class="n" id="k2"></div><div class="l">типичный разрыв СГ − выплаты, п.п.</div></div>
+    <div class="kpi"><div class="n" id="k4"></div><div class="l">СГ факт ниже плана</div></div>
+    <div class="kpi"><div class="n" id="k5"></div><div class="l">СМР до экспертизы (план КСГ)</div></div>
   </div>
 
   <div class="box mini">
-    <strong style="display:block;margin-bottom:8px">Кого смотреть в первую очередь</strong>
-    <p class="note" style="margin-top:0">Наибольший разрыв: готовность есть, выплат мало.</p>
+    <strong style="display:block;margin-bottom:8px">Разрывы по КТ и выплатам</strong>
+    <p class="note" style="margin-top:0">Школы с наибольшим числом сигналов.</p>
     <table>
-      <thead><tr><th>Школа</th><th class="r">СГ</th><th class="r">Выплаты</th><th class="r">Разрыв</th></tr></thead>
-      <tbody id="attn"></tbody>
+      <thead><tr><th>Школа</th><th class="r">СГ</th><th class="r">План</th><th class="r">Выпл.</th><th>Разрывы</th></tr></thead>
+      <tbody id="ktAttn"></tbody>
     </table>
   </div>
 
+  <div class="box">
+    <strong style="display:block;margin-bottom:8px">СГ факт vs выплаты (между школами)</strong>
+    <div class="chart-sm"><canvas id="cMini"></canvas></div>
+    <p class="note">Связь между школами: <span id="k3"></span> (0 = нет, 1 = сильная).</p>
+  </div>
+
   <details id="secCharts">
-    <summary>Графики и динамика по школам</summary>
+    <summary>Графики: СГ план, СГ факт, выплаты</summary>
     <div class="detail-body">
       <div class="cols2" style="margin-top:14px">
         <div>
-          <strong>Готовность vs выплаты</strong>
+          <strong>СГ факт vs выплаты</strong>
           <div class="chart"><canvas id="cScatter"></canvas></div>
         </div>
         <div>
@@ -340,27 +484,43 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
           <div class="chart"><canvas id="cBins"></canvas></div>
         </div>
       </div>
-      <strong>Школы с наиболее синхронными графиками</strong>
-      <div class="chart tall"><canvas id="cTop"></canvas></div>
-      <strong>Одна школа</strong>
+      <strong>Одна школа — три линии</strong>
       <div class="row">
         <select id="selSchool"></select>
         <span class="tag" id="tagR"></span>
         <span class="note" id="metaSchool" style="margin:0"></span>
       </div>
       <div class="chart"><canvas id="cTraj"></canvas></div>
-      <p class="note">Доп. цифры: связь по рейтингу <span id="d2"></span>, внутри школы <span id="d3"></span>, выплаты объясняют <span id="d4"></span> разницы в СГ.</p>
+      <p class="note" id="ktLine"></p>
+      <p class="note">Синяя — СГ факт, пунктир — СГ план, зелёная — выплаты (к 100 для сравнения формы).</p>
     </div>
   </details>
 
-  <details id="secTable">
-    <summary>Таблица всех школ</summary>
+  <details id="secKt">
+    <summary>Таблица разрывов и дат КТ</summary>
     <div class="detail-body">
       <div class="tbl-wrap">
         <table class="full">
           <thead><tr>
-            <th>Школа</th><th class="r">СГ %</th><th class="r">% выплат</th>
-            <th class="r">Выплаты, млн</th><th class="r">Разрыв</th><th class="r">Вместе</th>
+            <th>Школа</th><th class="r">СГ факт</th><th class="r">СГ план</th><th class="r">Δ план</th>
+            <th class="r">% выплат</th><th class="r">Δ выпл</th>
+            <th>Экспертиза</th><th>СМР старт</th><th>Контракт</th><th>Разрывы</th>
+          </tr></thead>
+          <tbody id="ktTbl"></tbody>
+        </table>
+      </div>
+      <p class="note" id="rsNote"></p>
+    </div>
+  </details>
+
+  <details id="secTable">
+    <summary>Таблица всех школ (кратко)</summary>
+    <div class="detail-body">
+      <div class="tbl-wrap">
+        <table class="full">
+          <thead><tr>
+            <th>Школа</th><th class="r">СГ</th><th class="r">План</th><th class="r">% выплат</th>
+            <th class="r">Разрыв</th><th class="r">Вместе</th>
           </tr></thead>
           <tbody id="tbl"></tbody>
         </table>
@@ -369,53 +529,74 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   </details>
 
   <details id="secContext">
-    <summary>Почему так и что делать</summary>
+    <summary>Как читать разрывы</summary>
     <div class="detail-body">
       <ul class="brief" style="margin-top:14px">
-        <li>Готовность на мониторинге и деньги — разные контуры.</li>
-        <li>Цепочка: работы → документы приняли → акт → оплата.</li>
-        <li>Цель — не «догнать выплатами», а быстрее принимать документы.</li>
-        <li>Высокая СГ при низких выплатах — сигнал по приёмке, не по кассе.</li>
+        <li><strong>СГ &gt; выплаты</strong> — работы идут, оплата ждёт приёмку документов.</li>
+        <li><strong>СГ &lt; план</strong> — объект отстаёт от графика стройки.</li>
+        <li><strong>СМР до экспертизы</strong> — стройка началась раньше плановой даты КТ «экспертиза» в КСГ.</li>
+        <li><strong>РС</strong> — в выгрузке КСГ для школ нет процедуры «Получение РС»; контроль через контракт и экспертизу.</li>
       </ul>
-      <p class="note">Источник: файлы СГ и платежей, названия — Simple List.</p>
+      <p class="note">Источники: СГ и платежи, 2408 Simple List, 1708 КСГ+Экспертиза.</p>
     </div>
   </details>
 </div>
 <script>
 const DATA = __DATA__;
-const blue='#1a4d7a', green='#2d6a4f';
-const charts = { mini:false, scatter:false, bins:false, top:false, traj:false };
+const blue='#1a4d7a', blueL='rgba(26,77,122,.35)', green='#2d6a4f';
+const charts = { mini:false, scatter:false, bins:false, traj:false };
+
+function flagsHtml(arr) {
+  if(!arr||!arr.length) return '—';
+  return arr.map(f=>'<span class="flag'+(f.includes('СМР')||f.includes('эксперт')?' warn':'')+'">'+f+'</span>').join('');
+}
 
 document.getElementById('k1').textContent = DATA.stats.n_sg_ahead + ' из ' + DATA.stats.n;
 document.getElementById('k2').textContent = '+' + DATA.stats.median_gap;
 document.getElementById('k3').textContent = DATA.stats.pearson_sg_pay_pct.toFixed(2);
-document.getElementById('d2').textContent = DATA.stats.spearman_sg_pay_pct.toFixed(2);
-document.getElementById('d3').textContent = DATA.stats.median_r.toFixed(2);
-document.getElementById('d4').textContent = (DATA.reg.r2*100).toFixed(0)+'%';
+document.getElementById('k4').textContent = DATA.stats.n_sg_behind_plan;
+document.getElementById('k5').textContent = DATA.stats.n_smr_before_exp;
 
-document.getElementById('attn').innerHTML = DATA.attention.map(s =>
-  `<tr><td title="${s.full}">${s.name}</td><td class="r">${s.sg}%</td><td class="r">${s.pct}%</td><td class="r">+${s.gap}</td></tr>`
+document.getElementById('ktAttn').innerHTML = DATA.kt_attention.map(s =>
+  `<tr><td title="${s.full}">${s.name}</td><td class="r">${s.sg}%</td><td class="r">${s.plan??'—'}%</td><td class="r">${s.pct??'—'}%</td><td>${flagsHtml(s.flags)}</td></tr>`
 ).join('');
+
+document.getElementById('b1').textContent = DATA.stats.n_sg_behind_plan;
+document.getElementById('b2').textContent = DATA.stats.n_sg_ahead;
+document.getElementById('b3').textContent = DATA.stats.n_smr_before_exp;
+
+document.getElementById('ktTbl').innerHTML = [...DATA.per].sort((a,b)=>(b.flags?.length||0)-(a.flags?.length||0)).map(p=>{
+  const k = DATA.kt_dates[p.uin]||{};
+  const exp = [k.exp_sl,k.exp_plan,k.exp_fact].filter(Boolean).join(' / ') || '—';
+  return `<tr><td>${p.name}</td><td class="r">${p.sg}</td><td class="r">${p.plan??'—'}</td><td class="r">${p.sg_plan_gap??'—'}</td><td class="r">${p.pct??'—'}</td><td class="r">${p.sg!=null&&p.pct!=null?(p.sg-p.pct).toFixed(0):'—'}</td><td>${exp}</td><td>${k.smr_start||'—'}</td><td>${k.ctr_fact||'—'}</td><td>${flagsHtml(p.flags)}</td></tr>`;
+}).join('');
+
+document.getElementById('rsNote').textContent = DATA.stats.has_rs_kt
+  ? 'КТ «Получение РС» найдена в КСГ.'
+  : 'КТ «Получение РС» в КСГ школ отсутствует — используем даты контракта и экспертизы из Акцент.';
 
 document.getElementById('tbl').innerHTML = DATA.per.map(p => {
   const gap = p.pct!=null ? (p.sg-p.pct).toFixed(0) : '—';
-  return `<tr><td>${p.name}</td><td class="r">${p.sg}</td><td class="r">${p.pct??'—'}</td><td class="r">${p.pay}</td><td class="r">${gap}</td><td class="r">${p.r!=null?p.r.toFixed(2):'—'}</td></tr>`;
+  return `<tr><td>${p.name}</td><td class="r">${p.sg}</td><td class="r">${p.plan??'—'}</td><td class="r">${p.pct??'—'}</td><td class="r">${gap}</td><td class="r">${p.r!=null?p.r.toFixed(2):'—'}</td></tr>`;
 }).join('');
 
 const sel = document.getElementById('selSchool');
-DATA.per.filter(p=>p.vary&&p.r!=null).forEach(p=>{
+DATA.per.filter(p=>p.vary).forEach(p=>{
   const o=document.createElement('option'); o.value=p.uin;
-  o.textContent=`${p.name} (${p.r.toFixed(2)})`; sel.appendChild(o);
+  o.textContent=p.name + (p.flags?.length ? ' ⚠' : ''); sel.appendChild(o);
 });
 sel.value = DATA.defaultUin;
 let chartTraj;
 
 function drawTraj(uin) {
   const rows = DATA.traj[uin]||[], m = DATA.per.find(p=>p.uin===uin), maxP = Math.max(...rows.map(r=>r.pay),1);
+  const k = DATA.kt_dates[uin]||{};
   document.getElementById('tagR').textContent = m&&m.r!=null ? 'вместе '+m.r.toFixed(2) : '';
-  document.getElementById('metaSchool').textContent = m ? `${m.name} · ${m.sg}% / ${m.pct}% · ${m.pay} млн` : '';
+  document.getElementById('metaSchool').textContent = m ? `${m.name} · факт ${m.sg}% / план ${m.plan??'—'}% / выплаты ${m.pct??'—'}%` : '';
+  document.getElementById('ktLine').textContent = `КТ: экспертиза ${k.exp_sl||k.exp_plan||'—'} · СМР ${k.smr_start||'—'} · контракт ${k.ctr_fact||'—'}` + (m&&m.flags?.length ? ' · '+m.flags.join(', ') : '');
   const cfg = { type:'line', data:{ labels:rows.map(r=>r.d), datasets:[
-    { label:'СГ', data:rows.map(r=>r.sg), borderColor:blue, tension:.25, pointRadius:2 },
+    { label:'СГ факт', data:rows.map(r=>r.sg), borderColor:blue, tension:.25, pointRadius:2 },
+    { label:'СГ план', data:rows.map(r=>r.plan), borderColor:blue, borderDash:[5,4], tension:.25, pointRadius:0 },
     { label:'Выплаты', data:rows.map(r=>Math.round(r.pay/maxP*100)), borderColor:green, tension:.25, pointRadius:2 }
   ]}, options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}}, scales:{ y:{min:0,max:105} } } };
   if(chartTraj) chartTraj.destroy(); chartTraj = new Chart(document.getElementById('cTraj'), cfg);
@@ -435,13 +616,13 @@ function initMini() {
 
 function initDetailCharts() {
   if(charts.scatter) return;
-  charts.scatter = charts.bins = charts.top = true;
+  charts.scatter = charts.bins = true;
   const pts = DATA.cross.filter(s=>s.pct!=null);
   const line=[]; for(let x=25;x<=95;x+=5) line.push({x,y:DATA.reg.a+DATA.reg.b*x});
   new Chart(document.getElementById('cScatter'), {
     type:'scatter',
     data:{ datasets:[
-      { label:'Школы', data:pts.map(s=>({x:s.pct,y:s.sg,name:s.full})), backgroundColor:'rgba(26,77,122,.75)', pointRadius:4 },
+      { label:'Школы', data:pts.map(s=>({x:s.pct,y:s.sg})), backgroundColor:'rgba(26,77,122,.75)', pointRadius:4 },
       { label:'Тренд', data:line, type:'line', borderColor:blue, borderDash:[5,4], pointRadius:0 }
     ]},
     options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}},
@@ -451,11 +632,6 @@ function initDetailCharts() {
     type:'bar',
     data:{ labels:DATA.bins.map(b=>b.label), datasets:[{ data:DATA.bins.map(b=>b.mean_sg), backgroundColor:blue }] },
     options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{ y:{min:88,max:100} } }
-  });
-  new Chart(document.getElementById('cTop'), {
-    type:'bar',
-    data:{ labels:DATA.top12.map(p=>p.name), datasets:[{ data:DATA.top12.map(p=>p.r), backgroundColor:green }] },
-    options:{ indexAxis:'y', responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{ x:{min:0,max:1} } }
   });
   drawTraj(sel.value);
   charts.traj = true;
