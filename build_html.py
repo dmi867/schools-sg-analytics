@@ -12,6 +12,11 @@ ROOT = Path(__file__).parent
 
 ADVANCE_PCTS = {30.0, 49.0}  # типовые проценты аванса, а не расчётный факт оплаты
 
+# Ручные исправления опечаток источника (Simple List расходится с более свежими данными).
+NAME_OVERRIDES = {
+    "1000001282.1000001075": "МБОУ СОШ № 28 ГОЩ",  # источник даёт МАОУ, актуальный тип — МБОУ
+}
+
 
 def short(n, keep_prefix=False):
     n = n or ""
@@ -219,7 +224,7 @@ def load_data():
             continue
         uin = f.stem
         info = sl.get(uin, {})
-        name = info.get("name", uin)
+        name = NAME_OVERRIDES.get(uin, info.get("name", uin))
         wb = openpyxl.load_workbook(f, data_only=True)
         series = []
         for row in wb.active.iter_rows(min_row=2, values_only=True):
@@ -533,6 +538,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         </div>
       </div>
       <strong>Одна школа</strong>
+      <p class="note">Звёздочка (*) в списке — у школы есть хотя бы одно замечание (см. раздел «Все школы: даты и разрывы» ниже).</p>
       <div class="row">
         <select id="selSchool"></select>
         <span class="tag" id="tagR"></span>
