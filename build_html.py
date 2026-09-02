@@ -2,6 +2,7 @@
 """Generate index.html from Schools xlsx data."""
 import json
 import math
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
@@ -10,8 +11,10 @@ import openpyxl
 ROOT = Path(__file__).parent
 
 
-def short(n):
-    n = (n or "").replace("МБОУ ", "").replace("МАОУ ", "").replace("МОУ ", "")
+def short(n, keep_prefix=False):
+    n = n or ""
+    if not keep_prefix:
+        n = n.replace("МБОУ ", "").replace("МАОУ ", "").replace("МОУ ", "")
     return (n[:42] + "…") if len(n) > 42 else n
 
 
@@ -323,6 +326,14 @@ def load_data():
                 "flags": flags,
             }
         )
+
+    name_counts = Counter(c["name"] for c in cross)
+    dup_uins = {c["uin"] for c in cross if name_counts[c["name"]] > 1}
+    if dup_uins:
+        uin_full = {c["uin"]: c["full"] for c in cross}
+        for row in (*kt_rows, *cross, *per):
+            if row["uin"] in dup_uins:
+                row["name"] = short(uin_full[row["uin"]], keep_prefix=True)
 
     valid = [s for s in cross if s["pct"] is not None and s["pay"] > 0]
     facts = [s["sg"] for s in valid]
