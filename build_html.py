@@ -39,6 +39,15 @@ def parse_amt(v):
         return 0.0
 
 
+def median(xs):
+    n = len(xs)
+    if n == 0:
+        return 0
+    s = sorted(xs)
+    mid = n // 2
+    return (s[mid - 1] + s[mid]) / 2 if n % 2 == 0 else s[mid]
+
+
 def corr(xs, ys):
     n = len(xs)
     if n < 3:
@@ -163,7 +172,7 @@ def build_flags(last, info, exp, smr, rs, ctr):
     pay_pct = info.get("pay_pct")
     sg_pay_gap = round(last["fact"] - pay_pct, 1) if pay_pct is not None else None
 
-    if sg_pay_gap is not None and sg_pay_gap > 15:
+    if sg_pay_gap is not None and sg_pay_gap > 55:
         flags.append("готовность выше выплат")
     if sg_plan_gap is not None and sg_plan_gap < -5:
         flags.append("отстаёт от плана")
@@ -349,10 +358,10 @@ def load_data():
             "n": len(valid),
             "pearson_sg_pay_pct": round(corr(facts, pcts), 3),
             "spearman_sg_pay_pct": round(spearman(facts, pcts), 3),
-            "median_r": round(sorted(rs_corr)[len(rs_corr) // 2], 3) if rs_corr else 0,
+            "median_r": round(median(rs_corr), 3) if rs_corr else 0,
             "n_varying": len(varying),
-            "n_sg_ahead": sum(1 for g in gaps if g > 15),
-            "median_gap": round(sorted(gaps)[len(gaps) // 2], 1) if gaps else 0,
+            "n_sg_ahead": sum(1 for g in gaps if g > 55),
+            "median_gap": round(median(gaps), 1) if gaps else 0,
             "n_sg_behind_plan": sum(
                 1 for p in per if p.get("sg_plan_gap") is not None and p["sg_plan_gap"] < -5
             ),
@@ -597,7 +606,7 @@ function drawTraj(uin) {
     { label:'Факт', data:rows.map(r=>r.sg), borderColor:blue, tension:.25, pointRadius:2 },
     { label:'План', data:rows.map(r=>r.plan), borderColor:blue, borderDash:[5,4], tension:.25, pointRadius:0 },
     { label:'Выплаты', data:rows.map(r=>Math.round(r.pay/maxP*100)), borderColor:green, tension:.25, pointRadius:2 }
-  ]}, options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}}, scales:{ y:{min:0,max:105} } } };
+  ]}, options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}}, scales:{ y:{min:0,max:100} } } };
   if(chartTraj) chartTraj.destroy(); chartTraj = new Chart(document.getElementById('cTraj'), cfg);
 }
 sel.onchange = e => drawTraj(e.target.value);
@@ -609,7 +618,7 @@ function initMini() {
     type:'scatter',
     data:{ datasets:[{ data:pts.map(s=>({x:s.pct,y:s.sg})), backgroundColor:'rgba(26,77,122,.7)', pointRadius:4 }] },
     options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}, tooltip:{callbacks:{label:c=>`выплаты ${c.raw.x}%, СГ ${c.raw.y}%`}}},
-      scales:{ x:{title:{display:true,text:'Выплаты, %'},min:20,max:100,ticks:{maxTicksLimit:5}}, y:{title:{display:true,text:'СГ, %'},min:70,max:105,ticks:{maxTicksLimit:5}} } }
+      scales:{ x:{title:{display:true,text:'Выплаты, %'},min:20,max:100,ticks:{maxTicksLimit:5}}, y:{title:{display:true,text:'СГ, %'},min:70,max:100,ticks:{maxTicksLimit:5}} } }
   });
 }
 
@@ -625,7 +634,7 @@ function initDetailCharts() {
       { label:'Тренд', data:line, type:'line', borderColor:blue, borderDash:[5,4], pointRadius:0 }
     ]},
     options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}},
-      scales:{ x:{title:{display:true,text:'Выплаты, %'},min:20,max:100}, y:{title:{display:true,text:'СГ, %'},min:70,max:105} } }
+      scales:{ x:{title:{display:true,text:'Выплаты, %'},min:20,max:100}, y:{title:{display:true,text:'СГ, %'},min:70,max:100} } }
   });
   new Chart(document.getElementById('cBins'), {
     type:'bar',
