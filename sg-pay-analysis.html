@@ -83,29 +83,32 @@
   <div class="box">
     <strong style="display:block;margin-bottom:8px">Готовность и выплаты по школам</strong>
     <div class="chart-sm"><canvas id="cMini"></canvas></div>
-    <p class="note">Связь слабая: <span id="k3"></span><span id="k3p"></span> (чем ближе к 0, тем слабее).</p>
+    <p class="note">Каждая точка — школа. Наведите курсор, чтобы увидеть, какая именно. Точки разбросаны без явного порядка — значит по проценту выплат нельзя предсказать готовность.</p>
   </div>
 
   <div class="box">
-    <strong style="display:block;margin-bottom:8px">Что говорит математика</strong>
+    <strong style="display:block;margin-bottom:8px">Главный вывод про деньги и готовность</strong>
     <ul class="brief">
-      <li>Между школами связи почти нет: r=<span id="mA"></span>, p≈<span id="mB"></span> — от нуля статистически не отличается. У кого готовность выше, не значит, что и оплачено больше.</li>
-      <li>А вот <strong>внутри одной школы</strong> факт СГ и накопленные выплаты во времени растут почти синхронно: медианная корреляция <span id="mC"></span> по <span id="mD"></span> школам, где выплаты вообще менялись.</li>
-      <li>Это два разных вопроса: «сколько денег уже закрыто актами по этой стройке» — совсем не то же самое, что «у кого выше готовность по сравнению с другими школами».</li>
+      <li><strong>Между школами</strong> связи почти нет: у кого готовность выше, не значит, что и заплатили больше — это подтверждают оба графика ниже (точки и столбики). <span class="note" style="margin:0">(r=<span id="mA"></span>, p≈<span id="mB"></span> — статистически не отличается от нуля)</span></li>
+      <li>А если следить за <strong>одной и той же школой</strong> во времени — там всё иначе: готовность и накопленные выплаты растут почти синхронно (это видно на графике «Одна школа» ниже). <span class="note" style="margin:0">(медианная корреляция <span id="mC"></span> по <span id="mD"></span> школам)</span></li>
+      <li>Разница простая: «сколько денег уже закрыто актами по конкретной стройке» — не то же самое, что «у кого выше готовность по сравнению с другими школами».</li>
     </ul>
   </div>
 
   <details id="secCharts">
     <summary>Графики по школе</summary>
     <div class="detail-body">
-      <div class="cols2" style="margin-top:14px">
+      <p class="note" style="margin-top:14px">Оба графика ниже показывают одно и то же с разных сторон: связи между готовностью и выплатами почти нет.</p>
+      <div class="cols2">
         <div>
           <strong>Готовность и выплаты</strong>
           <div class="chart"><canvas id="cScatter"></canvas></div>
+          <p class="note">Точка — школа (наведите курсор, чтобы узнать название). Пунктир — общий тренд по всем точкам: он почти горизонтальный, то есть роста почти нет.</p>
         </div>
         <div>
           <strong>Средняя СГ в группах по выплатам</strong>
           <div class="chart"><canvas id="cBins"></canvas></div>
+          <p class="note">Школы разбиты на 4 группы по проценту выплат. Столбики — средняя готовность в группе. Они почти одной высоты: больше заплатили — не значит выше готовность.</p>
         </div>
       </div>
       <strong>Одна школа</strong>
@@ -177,8 +180,6 @@ function flagsHtml(arr) {
 
 document.getElementById('k1').textContent = DATA.stats.n_sg_ahead + ' из ' + DATA.stats.n;
 document.getElementById('k2').textContent = '+' + DATA.stats.median_gap;
-document.getElementById('k3').textContent = DATA.stats.pearson_sg_pay_pct.toFixed(2);
-document.getElementById('k3p').textContent = DATA.stats.pearson_p!=null ? ', p≈'+DATA.stats.pearson_p.toFixed(2) : '';
 document.getElementById('k4').textContent = DATA.stats.n_sg_behind_plan;
 document.getElementById('k5').textContent = DATA.stats.n_smr_before_exp;
 
@@ -238,8 +239,8 @@ function initMini() {
   const pts = DATA.cross.filter(s=>s.pct!=null);
   new Chart(document.getElementById('cMini'), {
     type:'scatter',
-    data:{ datasets:[{ data:pts.map(s=>({x:s.pct,y:s.sg})), backgroundColor:'rgba(26,77,122,.7)', pointRadius:4 }] },
-    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}, datalabels:{display:false}, tooltip:{callbacks:{label:c=>`выплаты ${c.raw.x}%, СГ ${c.raw.y}%`}}},
+    data:{ datasets:[{ data:pts.map(s=>({x:s.pct,y:s.sg,name:s.name})), backgroundColor:'rgba(26,77,122,.7)', pointRadius:4 }] },
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}, datalabels:{display:false}, tooltip:{callbacks:{label:c=>`${c.raw.name}: выплаты ${c.raw.x}%, СГ ${c.raw.y}%`}}},
       scales:{ x:{title:{display:true,text:'Выплаты, %'},min:20,max:100,ticks:{maxTicksLimit:5}}, y:{title:{display:true,text:'СГ, %'},min:70,max:100,ticks:{maxTicksLimit:5}} } }
   });
 }
@@ -252,15 +253,16 @@ function initDetailCharts() {
   new Chart(document.getElementById('cScatter'), {
     type:'scatter',
     data:{ datasets:[
-      { label:'Школы', data:pts.map(s=>({x:s.pct,y:s.sg})), backgroundColor:'rgba(26,77,122,.75)', pointRadius:4 },
-      { label:'Тренд (R²='+DATA.reg.r2.toFixed(2)+')', data:line, type:'line', borderColor:blue, borderDash:[5,4], pointRadius:0 }
+      { label:'Школы', data:pts.map(s=>({x:s.pct,y:s.sg,name:s.name})), backgroundColor:'rgba(26,77,122,.75)', pointRadius:4 },
+      { label:'Тренд по всем школам', data:line, type:'line', borderColor:blue, borderDash:[5,4], pointRadius:0 }
     ]},
-    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}, datalabels:{display:false}},
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}, datalabels:{display:false},
+      tooltip:{callbacks:{label:c=>c.dataset.label==='Школы' ? `${c.raw.name}: выплаты ${c.raw.x}%, СГ ${c.raw.y}%` : 'тренд'}}},
       scales:{ x:{title:{display:true,text:'Выплаты, %'},min:20,max:100}, y:{title:{display:true,text:'СГ, %'},min:70,max:100} } }
   });
   new Chart(document.getElementById('cBins'), {
     type:'bar',
-    data:{ labels:DATA.bins.map(b=>b.label+' (n='+b.n+')'), datasets:[{ data:DATA.bins.map(b=>b.mean_sg), backgroundColor:blue }] },
+    data:{ labels:DATA.bins.map(b=>b.label+' ('+b.n+' шк.)'), datasets:[{ data:DATA.bins.map(b=>b.mean_sg), backgroundColor:blue }] },
     options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false},
       datalabels:{anchor:'end',align:'end',color:'#555',font:{size:11},formatter:v=>v.toFixed(1)+'%'} },
       scales:{ y:{min:0,max:100,title:{display:true,text:'СГ, %'}} } }
