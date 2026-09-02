@@ -15,6 +15,7 @@ def short(n, keep_prefix=False):
     n = n or ""
     if not keep_prefix:
         n = n.replace("МБОУ ", "").replace("МАОУ ", "").replace("МОУ ", "")
+        n = n.lstrip("-– ").strip()
     return (n[:42] + "…") if len(n) > 42 else n
 
 
@@ -40,6 +41,13 @@ def parse_amt(v):
         return float(str(v).replace("\xa0", "").replace(" ", "").replace(",", "."))
     except ValueError:
         return 0.0
+
+
+def two_tailed_p(r, n):
+    if r is None or n < 3 or abs(r) >= 1:
+        return None
+    t = r * math.sqrt(n - 2) / math.sqrt(1 - r**2)
+    return round(2 * (1 - 0.5 * (1 + math.erf(abs(t) / math.sqrt(2)))), 3)
 
 
 def median(xs):
@@ -359,18 +367,16 @@ def load_data():
             )
 
     gaps = [s["gap"] for s in cross if s["gap"] is not None]
-    gaps_sorted = sorted(
-        [s for s in cross if s["gap"] is not None],
-        key=lambda x: -x["gap"],
-    )
     kt_sorted = sorted(kt_rows, key=lambda x: (-x["flag_n"], -(x["sg_pay_gap"] or 0)))
 
     has_rs_kt = any(kt_dates[u].get("rs_plan") or kt_dates[u].get("rs_fact") for u in kt_dates)
+    pearson = corr(facts, pcts)
 
     return {
         "stats": {
             "n": len(valid),
-            "pearson_sg_pay_pct": round(corr(facts, pcts), 3),
+            "pearson_sg_pay_pct": round(pearson, 3),
+            "pearson_p": two_tailed_p(pearson, len(valid)),
             "spearman_sg_pay_pct": round(spearman(facts, pcts), 3),
             "median_r": round(median(rs_corr), 3) if rs_corr else 0,
             "n_varying": len(varying),
@@ -383,17 +389,6 @@ def load_data():
             "n_kt_issues": sum(1 for p in per if any(f in p.get("flags", []) for f in ("стройка до экспертизы", "экспертиза не бьётся с КСГ", "РС опоздал", "нет заключения экспертизы"))),
             "has_rs_kt": has_rs_kt,
         },
-        "attention": [
-            {
-                "name": s["name"],
-                "full": s["full"],
-                "sg": s["sg"],
-                "pct": s["pct"],
-                "gap": s["gap"],
-                "flags": next((k["flags"] for k in kt_rows if k["name"] == s["name"]), []),
-            }
-            for s in gaps_sorted[:8]
-        ],
         "kt_attention": kt_sorted[:10],
         "reg": {"a": round(a, 1), "b": round(b, 4), "r2": round(r2, 3)},
         "bins": bins,
@@ -401,7 +396,6 @@ def load_data():
         "per": sorted(per, key=lambda x: -(x["r"] if x["r"] is not None else -1)),
         "traj": traj,
         "kt_dates": kt_dates,
-        "top12": varying[:12],
         "defaultUin": varying[0]["uin"] if varying else per[0]["uin"],
     }
 
@@ -413,6 +407,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>СГ и выплаты — 47 школ</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
 <style>
   :root { --bg:#f4f3ef; --surface:#fff; --text:#1c1c1c; --muted:#555; --faint:#888;
     --line:#ddd9d0; --accent:#1a4d7a; --green:#2d6a4f;
@@ -490,7 +485,16 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   <div class="box">
     <strong style="display:block;margin-bottom:8px">Готовность и выплаты по школам</strong>
     <div class="chart-sm"><canvas id="cMini"></canvas></div>
-    <p class="note">Связь слабая: <span id="k3"></span> (чем ближе к 0, тем слабее).</p>
+    <p class="note">Связь слабая: <span id="k3"></span><span id="k3p"></span> (чем ближе к 0, тем слабее).</p>
+  </div>
+
+  <div class="box">
+    <strong style="display:block;margin-bottom:8px">Что говорит математика</strong>
+    <ul class="brief">
+      <li>Между школами связи почти нет: r=<span id="mA"></span>, p≈<span id="mB"></span> — от нуля статистически не отличается. У кого готовность выше, не значит, что и оплачено больше.</li>
+      <li>А вот <strong>внутри одной школы</strong> факт СГ и накопленные выплаты во времени растут почти синхронно: медианная корреляция <span id="mC"></span> по <span id="mD"></span> школам, где выплаты вообще менялись.</li>
+      <li>Это два разных вопроса: «сколько денег уже закрыто актами по этой стройке» — совсем не то же самое, что «у кого выше готовность по сравнению с другими школами».</li>
+    </ul>
   </div>
 
   <details id="secCharts">
@@ -576,8 +580,14 @@ function flagsHtml(arr) {
 document.getElementById('k1').textContent = DATA.stats.n_sg_ahead + ' из ' + DATA.stats.n;
 document.getElementById('k2').textContent = '+' + DATA.stats.median_gap;
 document.getElementById('k3').textContent = DATA.stats.pearson_sg_pay_pct.toFixed(2);
+document.getElementById('k3p').textContent = DATA.stats.pearson_p!=null ? ', p≈'+DATA.stats.pearson_p.toFixed(2) : '';
 document.getElementById('k4').textContent = DATA.stats.n_sg_behind_plan;
 document.getElementById('k5').textContent = DATA.stats.n_smr_before_exp;
+
+document.getElementById('mA').textContent = DATA.stats.pearson_sg_pay_pct.toFixed(2);
+document.getElementById('mB').textContent = DATA.stats.pearson_p!=null ? DATA.stats.pearson_p.toFixed(2) : '—';
+document.getElementById('mC').textContent = DATA.stats.median_r.toFixed(2);
+document.getElementById('mD').textContent = DATA.stats.n_varying;
 
 document.getElementById('ktAttn').innerHTML = DATA.kt_attention.map(s =>
   `<tr><td title="${s.full}">${s.name}</td><td class="r">${s.sg}%</td><td class="r">${s.plan??'—'}%</td><td class="r">${s.pct??'—'}%</td><td>${flagsHtml(s.flags)}</td></tr>`
@@ -620,7 +630,7 @@ function drawTraj(uin) {
     { label:'Факт', data:rows.map(r=>r.sg), borderColor:blue, tension:.25, pointRadius:2 },
     { label:'План', data:rows.map(r=>r.plan), borderColor:blue, borderDash:[5,4], tension:.25, pointRadius:0 },
     { label:'Выплаты', data:rows.map(r=>r.payPct), borderColor:green, tension:.25, pointRadius:2 }
-  ]}, options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}}, scales:{ y:{min:0,max:100} } } };
+  ]}, options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}, datalabels:{display:false}}, scales:{ y:{min:0,max:100} } } };
   if(chartTraj) chartTraj.destroy(); chartTraj = new Chart(document.getElementById('cTraj'), cfg);
 }
 sel.onchange = e => drawTraj(e.target.value);
@@ -631,7 +641,7 @@ function initMini() {
   new Chart(document.getElementById('cMini'), {
     type:'scatter',
     data:{ datasets:[{ data:pts.map(s=>({x:s.pct,y:s.sg})), backgroundColor:'rgba(26,77,122,.7)', pointRadius:4 }] },
-    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}, tooltip:{callbacks:{label:c=>`выплаты ${c.raw.x}%, СГ ${c.raw.y}%`}}},
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}, datalabels:{display:false}, tooltip:{callbacks:{label:c=>`выплаты ${c.raw.x}%, СГ ${c.raw.y}%`}}},
       scales:{ x:{title:{display:true,text:'Выплаты, %'},min:20,max:100,ticks:{maxTicksLimit:5}}, y:{title:{display:true,text:'СГ, %'},min:70,max:100,ticks:{maxTicksLimit:5}} } }
   });
 }
@@ -645,15 +655,17 @@ function initDetailCharts() {
     type:'scatter',
     data:{ datasets:[
       { label:'Школы', data:pts.map(s=>({x:s.pct,y:s.sg})), backgroundColor:'rgba(26,77,122,.75)', pointRadius:4 },
-      { label:'Тренд', data:line, type:'line', borderColor:blue, borderDash:[5,4], pointRadius:0 }
+      { label:'Тренд (R²='+DATA.reg.r2.toFixed(2)+')', data:line, type:'line', borderColor:blue, borderDash:[5,4], pointRadius:0 }
     ]},
-    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}},
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}, datalabels:{display:false}},
       scales:{ x:{title:{display:true,text:'Выплаты, %'},min:20,max:100}, y:{title:{display:true,text:'СГ, %'},min:70,max:100} } }
   });
   new Chart(document.getElementById('cBins'), {
     type:'bar',
-    data:{ labels:DATA.bins.map(b=>b.label), datasets:[{ data:DATA.bins.map(b=>b.mean_sg), backgroundColor:blue }] },
-    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{ y:{min:88,max:100} } }
+    data:{ labels:DATA.bins.map(b=>b.label+' (n='+b.n+')'), datasets:[{ data:DATA.bins.map(b=>b.mean_sg), backgroundColor:blue }] },
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false},
+      datalabels:{anchor:'end',align:'end',color:'#555',font:{size:11},formatter:v=>v.toFixed(1)+'%'} },
+      scales:{ y:{min:0,max:100,title:{display:true,text:'СГ, %'}} } }
   });
   drawTraj(sel.value);
   charts.traj = true;
