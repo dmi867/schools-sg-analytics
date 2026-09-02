@@ -242,6 +242,8 @@ def load_data():
         last = series[-1]
         pay_pct = info.get("pay_pct")
 
+        pay_scale = pay_pct / total if (pay_pct is not None and total > 0) else None
+
         cum = 0
         pi = 0
         pts = []
@@ -255,6 +257,7 @@ def load_data():
                     "sg": round(pt["fact"], 1),
                     "plan": round(pt["plan"], 1) if pt["plan"] is not None else None,
                     "pay": round(cum / 1e6, 1),
+                    "payPct": round(cum * pay_scale, 1) if pay_scale is not None else None,
                 }
             )
         if len(pts) > 36:
@@ -511,7 +514,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       </div>
       <div class="chart"><canvas id="cTraj"></canvas></div>
       <p class="note" id="ktLine"></p>
-      <p class="note">Синяя — факт, пунктир — план, зелёная — выплаты (приведены к одной шкале).</p>
+      <p class="note">Синяя — факт, пунктир — план, зелёная — % от суммы контракта, уже выплаченной на эту дату.</p>
     </div>
   </details>
 
@@ -608,7 +611,7 @@ sel.value = DATA.defaultUin;
 let chartTraj;
 
 function drawTraj(uin) {
-  const rows = DATA.traj[uin]||[], m = DATA.per.find(p=>p.uin===uin), maxP = Math.max(...rows.map(r=>r.pay),1);
+  const rows = DATA.traj[uin]||[], m = DATA.per.find(p=>p.uin===uin);
   const k = DATA.kt_dates[uin]||{};
   document.getElementById('tagR').textContent = m&&m.r!=null ? 'корр. '+m.r.toFixed(2) : '';
   document.getElementById('metaSchool').textContent = m ? `${m.name}: ${m.sg}% факт, ${m.plan??'—'}% план, ${m.pct??'—'}% выпл.` : '';
@@ -616,7 +619,7 @@ function drawTraj(uin) {
   const cfg = { type:'line', data:{ labels:rows.map(r=>r.d), datasets:[
     { label:'Факт', data:rows.map(r=>r.sg), borderColor:blue, tension:.25, pointRadius:2 },
     { label:'План', data:rows.map(r=>r.plan), borderColor:blue, borderDash:[5,4], tension:.25, pointRadius:0 },
-    { label:'Выплаты', data:rows.map(r=>Math.round(r.pay/maxP*100)), borderColor:green, tension:.25, pointRadius:2 }
+    { label:'Выплаты', data:rows.map(r=>r.payPct), borderColor:green, tension:.25, pointRadius:2 }
   ]}, options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}}, scales:{ y:{min:0,max:100} } } };
   if(chartTraj) chartTraj.destroy(); chartTraj = new Chart(document.getElementById('cTraj'), cfg);
 }
