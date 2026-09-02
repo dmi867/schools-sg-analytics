@@ -369,7 +369,6 @@ def load_data():
     gaps = [s["gap"] for s in cross if s["gap"] is not None]
     kt_sorted = sorted(kt_rows, key=lambda x: (-x["flag_n"], -(x["sg_pay_gap"] or 0)))
 
-    has_rs_kt = any(kt_dates[u].get("rs_plan") or kt_dates[u].get("rs_fact") for u in kt_dates)
     pearson = corr(facts, pcts)
 
     return {
@@ -387,7 +386,6 @@ def load_data():
             ),
             "n_smr_before_exp": sum(1 for p in per if "стройка до экспертизы" in p.get("flags", [])),
             "n_kt_issues": sum(1 for p in per if any(f in p.get("flags", []) for f in ("стройка до экспертизы", "экспертиза не бьётся с КСГ", "РС опоздал", "нет заключения экспертизы"))),
-            "has_rs_kt": has_rs_kt,
         },
         "kt_attention": kt_sorted[:10],
         "reg": {"a": round(a, 1), "b": round(b, 4), "r2": round(r2, 3)},
@@ -538,7 +536,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
           <tbody id="ktTbl"></tbody>
         </table>
       </div>
-      <p class="note" id="rsNote"></p>
     </div>
   </details>
 
@@ -603,10 +600,6 @@ document.getElementById('ktTbl').innerHTML = [...DATA.per].sort((a,b)=>(b.flags?
   const exp = [k.exp_sl,k.exp_plan,k.exp_fact].filter(Boolean).join(' / ') || '—';
   return `<tr><td>${p.name}</td><td class="r">${p.sg}</td><td class="r">${p.plan??'—'}</td><td class="r">${p.sg_plan_gap??'—'}</td><td class="r">${p.pct??'—'}</td><td class="r">${p.sg!=null&&p.pct!=null?(p.sg-p.pct).toFixed(0):'—'}</td><td>${exp}</td><td>${k.smr_start||'—'}</td><td>${k.ctr_fact||'—'}</td><td>${flagsHtml(p.flags)}</td></tr>`;
 }).join('');
-
-document.getElementById('rsNote').textContent = DATA.stats.has_rs_kt
-  ? 'В КСГ есть «Получение РС».'
-  : '«Получение РС» в КСГ по школам нет — смотрим контракт и экспертизу.';
 
 document.getElementById('tbl').innerHTML = DATA.per.map(p => {
   const gap = p.pct!=null ? (p.sg-p.pct).toFixed(0) : '—';
