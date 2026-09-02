@@ -10,6 +10,8 @@ import openpyxl
 
 ROOT = Path(__file__).parent
 
+ADVANCE_PCTS = {30.0, 49.0}  # типовые проценты аванса, а не расчётный факт оплаты
+
 
 def short(n, keep_prefix=False):
     n = n or ""
@@ -318,6 +320,7 @@ def load_data():
                 "full": name,
                 "sg": round(last["fact"], 1),
                 "pct": pay_pct,
+                "advance": pay_pct in ADVANCE_PCTS,
                 "pay": round(total / 1e6, 1),
                 "gap": sg_pay_gap,
             }
@@ -371,6 +374,12 @@ def load_data():
 
     pearson = corr(facts, pcts)
 
+    no_adv = [s for s in valid if not s["advance"]]
+    facts_na = [s["sg"] for s in no_adv]
+    pcts_na = [s["pct"] for s in no_adv]
+    pearson_na = corr(facts_na, pcts_na) if len(no_adv) >= 3 else None
+    n_advance = sum(1 for s in cross if s["advance"])
+
     return {
         "stats": {
             "n": len(valid),
@@ -386,6 +395,10 @@ def load_data():
             ),
             "n_smr_before_exp": sum(1 for p in per if "стройка до экспертизы" in p.get("flags", [])),
             "n_kt_issues": sum(1 for p in per if any(f in p.get("flags", []) for f in ("стройка до экспертизы", "экспертиза не бьётся с КСГ", "РС опоздал", "нет заключения экспертизы"))),
+            "n_advance": n_advance,
+            "n_no_advance": len(no_adv),
+            "pearson_no_advance": round(pearson_na, 3) if pearson_na is not None else None,
+            "pearson_no_advance_p": two_tailed_p(pearson_na, len(no_adv)),
         },
         "kt_attention": kt_sorted[:10],
         "reg": {"a": round(a, 1), "b": round(b, 4), "r2": round(r2, 3)},
@@ -483,7 +496,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   <div class="box">
     <strong style="display:block;margin-bottom:8px">Готовность и выплаты по школам</strong>
     <div class="chart-sm"><canvas id="cMini"></canvas></div>
-    <p class="note">Каждая точка — школа. Наведите курсор, чтобы увидеть, какая именно. Точки разбросаны без явного порядка — значит по проценту выплат нельзя предсказать готовность.</p>
+    <p class="note">Каждая точка — школа (наведите курсор, чтобы увидеть, какая). Серые точки — это школы с типовым авансом (30% или 49%), а не с индивидуально посчитанной оплатой. Разброс без явного порядка — по проценту выплат нельзя предсказать готовность.</p>
   </div>
 
   <div class="box">
@@ -492,6 +505,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       <li><strong>Между школами</strong> связи почти нет: у кого готовность выше, не значит, что и заплатили больше — это подтверждают оба графика ниже (точки и столбики). <span class="note" style="margin:0">(r=<span id="mA"></span>, p≈<span id="mB"></span> — статистически не отличается от нуля)</span></li>
       <li>А если следить за <strong>одной и той же школой</strong> во времени — там всё иначе: готовность и накопленные выплаты растут почти синхронно (это видно на графике «Одна школа» ниже). <span class="note" style="margin:0">(медианная корреляция <span id="mC"></span> по <span id="mD"></span> школам)</span></li>
       <li>Разница простая: «сколько денег уже закрыто актами по конкретной стройке» — не то же самое, что «у кого выше готовность по сравнению с другими школами».</li>
+      <li>На графиках ниже видно, что точки стоят не сплошным облаком, а двумя плотными столбиками — у <span id="mE"></span> школ «% выплат» это ровно 30% или 49%. Это типовые проценты аванса, а не индивидуально посчитанный факт оплаты (на графике справа они серые). Если убрать их и оставить только <span id="mF"></span> школ, где процент явно свой, связь не появляется и там: r=<span id="mG"></span>, p≈<span id="mH"></span> — то есть дело не в авансах, связи действительно нет.</li>
     </ul>
   </div>
 
@@ -503,7 +517,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         <div>
           <strong>Готовность и выплаты</strong>
           <div class="chart"><canvas id="cScatter"></canvas></div>
-          <p class="note">Точка — школа (наведите курсор, чтобы узнать название). Пунктир — общий тренд по всем точкам: он почти горизонтальный, то есть роста почти нет.</p>
+          <p class="note">Точка — школа (наведите курсор, чтобы узнать название). Серые — типовой аванс (30% или 49%), не факт оплаты. Пунктир — общий тренд по всем точкам: он почти горизонтальный, то есть роста почти нет.</p>
         </div>
         <div>
           <strong>Средняя СГ в группах по выплатам</strong>
@@ -586,6 +600,10 @@ document.getElementById('mA').textContent = DATA.stats.pearson_sg_pay_pct.toFixe
 document.getElementById('mB').textContent = DATA.stats.pearson_p!=null ? DATA.stats.pearson_p.toFixed(2) : '—';
 document.getElementById('mC').textContent = DATA.stats.median_r.toFixed(2);
 document.getElementById('mD').textContent = DATA.stats.n_varying;
+document.getElementById('mE').textContent = DATA.stats.n_advance;
+document.getElementById('mF').textContent = DATA.stats.n_no_advance;
+document.getElementById('mG').textContent = DATA.stats.pearson_no_advance!=null ? DATA.stats.pearson_no_advance.toFixed(2) : '—';
+document.getElementById('mH').textContent = DATA.stats.pearson_no_advance_p!=null ? DATA.stats.pearson_no_advance_p.toFixed(2) : '—';
 
 document.getElementById('ktAttn').innerHTML = DATA.kt_attention.map(s =>
   `<tr><td title="${s.full}">${s.name}</td><td class="r">${s.sg}%</td><td class="r">${s.plan??'—'}%</td><td class="r">${s.pct??'—'}%</td><td>${flagsHtml(s.flags)}</td></tr>`
@@ -632,10 +650,14 @@ sel.onchange = e => drawTraj(e.target.value);
 function initMini() {
   if(charts.mini) return; charts.mini = true;
   const pts = DATA.cross.filter(s=>s.pct!=null);
+  const mk = s => ({x:s.pct,y:s.sg,name:s.name,adv:s.advance});
   new Chart(document.getElementById('cMini'), {
     type:'scatter',
-    data:{ datasets:[{ data:pts.map(s=>({x:s.pct,y:s.sg,name:s.name})), backgroundColor:'rgba(26,77,122,.7)', pointRadius:4 }] },
-    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}, datalabels:{display:false}, tooltip:{callbacks:{label:c=>`${c.raw.name}: выплаты ${c.raw.x}%, СГ ${c.raw.y}%`}}},
+    data:{ datasets:[
+      { label:'Свой процент', data:pts.filter(s=>!s.advance).map(mk), backgroundColor:'rgba(26,77,122,.75)', pointRadius:4 },
+      { label:'Аванс (30% или 49%)', data:pts.filter(s=>s.advance).map(mk), backgroundColor:'rgba(140,140,140,.6)', pointRadius:4 }
+    ]},
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}, datalabels:{display:false}, tooltip:{callbacks:{label:c=>`${c.raw.name}: выплаты ${c.raw.x}%${c.raw.adv?' (аванс)':''}, СГ ${c.raw.y}%`}}},
       scales:{ x:{title:{display:true,text:'Выплаты, %'},min:20,max:100,ticks:{maxTicksLimit:5}}, y:{title:{display:true,text:'СГ, %'},min:70,max:100,ticks:{maxTicksLimit:5}} } }
   });
 }
@@ -644,15 +666,17 @@ function initDetailCharts() {
   if(charts.scatter) return;
   charts.scatter = charts.bins = true;
   const pts = DATA.cross.filter(s=>s.pct!=null);
+  const mk2 = s => ({x:s.pct,y:s.sg,name:s.name,adv:s.advance});
   const line=[]; for(let x=25;x<=95;x+=5) line.push({x,y:DATA.reg.a+DATA.reg.b*x});
   new Chart(document.getElementById('cScatter'), {
     type:'scatter',
     data:{ datasets:[
-      { label:'Школы', data:pts.map(s=>({x:s.pct,y:s.sg,name:s.name})), backgroundColor:'rgba(26,77,122,.75)', pointRadius:4 },
+      { label:'Свой процент', data:pts.filter(s=>!s.advance).map(mk2), backgroundColor:'rgba(26,77,122,.75)', pointRadius:4 },
+      { label:'Аванс (30% или 49%)', data:pts.filter(s=>s.advance).map(mk2), backgroundColor:'rgba(140,140,140,.6)', pointRadius:4 },
       { label:'Тренд по всем школам', data:line, type:'line', borderColor:blue, borderDash:[5,4], pointRadius:0 }
     ]},
     options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}, datalabels:{display:false},
-      tooltip:{callbacks:{label:c=>c.dataset.label==='Школы' ? `${c.raw.name}: выплаты ${c.raw.x}%, СГ ${c.raw.y}%` : 'тренд'}}},
+      tooltip:{callbacks:{label:c=>c.raw.name ? `${c.raw.name}: выплаты ${c.raw.x}%${c.raw.adv?' (аванс)':''}, СГ ${c.raw.y}%` : 'тренд'}}},
       scales:{ x:{title:{display:true,text:'Выплаты, %'},min:20,max:100}, y:{title:{display:true,text:'СГ, %'},min:70,max:100} } }
   });
   new Chart(document.getElementById('cBins'), {
