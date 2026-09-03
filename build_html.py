@@ -184,6 +184,13 @@ def load_simple_list():
     return sl
 
 
+def load_finance2026():
+    path = ROOT / "finance2026.json"
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def build_flags(last, info, exp, smr, rs, ctr):
     flags = []
     sg_plan_gap = round(last["fact"] - last["plan"], 1) if last["plan"] is not None else None
@@ -211,8 +218,10 @@ def build_flags(last, info, exp, smr, rs, ctr):
 def load_data():
     sl = load_simple_list()
     ksg = load_ksg()
+    fin2026 = load_finance2026()
 
     cross, per, traj, kt_rows, kt_dates = [], [], {}, [], {}
+    budget_alert = []
 
     for f in sorted(ROOT.glob("*.xlsx")):
         if (
@@ -293,6 +302,10 @@ def load_data():
         rs = kt_bounds(uin_kt.get("Получение РС", []))
         flags, sg_plan_gap, sg_pay_gap = build_flags(last, info, exp, smr, rs, ctr)
 
+        fin = fin2026.get(uin)
+        if fin and fin.get("osv2026") == 0:
+            flags.append("не осваивает бюджет 2026")
+
         kt_dates[uin] = {
             "exp_plan": fmt_date(exp.get("plan_end")),
             "exp_fact": fmt_date(exp.get("fact_end")),
@@ -354,6 +367,20 @@ def load_data():
             if row["uin"] in dup_uins:
                 row["name"] = short(uin_full[row["uin"]], keep_prefix=True)
 
+    for k in kt_rows:
+        fin = fin2026.get(k["uin"])
+        if fin and fin.get("osv2026") == 0:
+            budget_alert.append(
+                {
+                    "uin": k["uin"],
+                    "name": k["name"],
+                    "full": k["full"],
+                    "sg": k["sg"],
+                    "plan2026": round(fin["plan2026_rub"] / 1e6, 1),
+                }
+            )
+    budget_alert.sort(key=lambda x: -x["plan2026"])
+
     valid = [s for s in cross if s["pct"] is not None and s["pay"] > 0]
     facts = [s["sg"] for s in valid]
     pcts = [s["pct"] for s in valid]
@@ -404,7 +431,9 @@ def load_data():
             "n_no_advance": len(no_adv),
             "pearson_no_advance": round(pearson_na, 3) if pearson_na is not None else None,
             "pearson_no_advance_p": two_tailed_p(pearson_na, len(no_adv)),
+            "n_no_budget2026": len(budget_alert),
         },
+        "budget_alert": budget_alert,
         "kt_attention": kt_sorted[:10],
         "reg": {"a": round(a, 1), "b": round(b, 4), "r2": round(r2, 3)},
         "bins": bins,
@@ -480,6 +509,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     <li>У <span id="b1"></span> школ готовность ниже плана больше чем на 5 п.п.</li>
     <li>У <span id="b2"></span> школ готовность заметно выше того, что уже заплатили.</li>
     <li>У <span id="b3"></span> школ стройка началась раньше, чем в КСГ стоит экспертиза.</li>
+    <li><strong>У <span id="b4"></span> школ в 2026 году не потрачено ни рубля из утверждённого бюджета</strong> — см. блок ниже.</li>
     <li>Про РС: в КСГ по школам такой точки нет, смотрим контракт и экспертизу.</li>
   </ul>
 
@@ -488,6 +518,15 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     <div class="kpi"><div class="n" id="k2"></div><div class="l">обычный разрыв, п.п.</div></div>
     <div class="kpi"><div class="n" id="k4"></div><div class="l">факт ниже плана</div></div>
     <div class="kpi"><div class="n" id="k5"></div><div class="l">стройка до экспертизы</div></div>
+  </div>
+
+  <div class="box" style="background:#fdecea;border-color:#e8a8a0">
+    <strong style="display:block;margin-bottom:6px;color:#8a2a22">⚠ <span id="k6"></span> школ не осваивают бюджет 2026 года — деньги утверждены, но не выплачены</strong>
+    <p class="note" style="margin:0 0 8px">Это не аванс и не обычная задержка — по этим объектам с начала 2026 года кассовых выплат не было вообще (0%), при этом строительство почти завершено (готовность 80–100%). Деньги на этот год утверждены, просто не идут.</p>
+    <table>
+      <thead><tr><th>Школа</th><th class="r">СГ</th><th class="r">План 2026, млн ₽</th></tr></thead>
+      <tbody id="budgetAlert"></tbody>
+    </table>
   </div>
 
   <div class="box mini">
@@ -601,7 +640,7 @@ const charts = { mini:false, scatter:false, bins:false, traj:false };
 
 function flagsHtml(arr) {
   if(!arr||!arr.length) return '—';
-  return arr.map(f=>'<span class="flag'+(f.includes('стройка')||f.includes('эксперт')?' warn':'')+'">'+f+'</span>').join('');
+  return arr.map(f=>'<span class="flag'+(f.includes('стройка')||f.includes('эксперт')||f.includes('бюджет')?' warn':'')+'">'+f+'</span>').join('');
 }
 
 document.getElementById('k1').textContent = DATA.stats.n_sg_ahead + ' из ' + DATA.stats.n;
@@ -625,6 +664,12 @@ document.getElementById('ktAttn').innerHTML = DATA.kt_attention.map(s =>
 document.getElementById('b1').textContent = DATA.stats.n_sg_behind_plan;
 document.getElementById('b2').textContent = DATA.stats.n_sg_ahead;
 document.getElementById('b3').textContent = DATA.stats.n_smr_before_exp;
+document.getElementById('b4').textContent = DATA.stats.n_no_budget2026;
+document.getElementById('k6').textContent = DATA.stats.n_no_budget2026;
+
+document.getElementById('budgetAlert').innerHTML = DATA.budget_alert.map(s =>
+  `<tr><td title="${s.full}">${s.name}</td><td class="r">${s.sg}%</td><td class="r">${s.plan2026}</td></tr>`
+).join('');
 
 document.getElementById('ktTbl').innerHTML = [...DATA.per].sort((a,b)=>(b.flags?.length||0)-(a.flags?.length||0)).map(p=>{
   const k = DATA.kt_dates[p.uin]||{};
