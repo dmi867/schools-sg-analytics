@@ -2,6 +2,7 @@
 """Generate index.html from Schools xlsx data."""
 import json
 import math
+import re
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -24,6 +25,17 @@ def short(n, keep_prefix=False):
         n = n.replace("МБОУ ", "").replace("МАОУ ", "").replace("МОУ ", "")
         n = n.lstrip("-– ").strip()
     return (n[:42] + "…") if len(n) > 42 else n
+
+
+def short_contractor(c):
+    if not c:
+        return None
+    c = re.sub(
+        r'(ООО|ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ|ЗАО|АО|Закрытое акционерное общество|Акционерное общество)\s*',
+        "", str(c), flags=re.I,
+    ).strip()
+    c = c.strip('"\' ')
+    return c.title() if c.isupper() else c
 
 
 def parse_date(v):
@@ -171,10 +183,12 @@ def load_simple_list():
                 pay_pct = round(float(str(v).replace(",", ".")), 1)
             except ValueError:
                 pass
+        contractor = row[col["Наименование подрядчика"]] or (sl.get(uin) or {}).get("contractor")
         sl[uin] = {
             "yr": yr,
             "name": row[col["Название объекта"]],
             "pay_pct": pay_pct,
+            "contractor": contractor,
             "exp_in": parse_date(row[col["Дата подачи заявления (захода) на экспертизу"]]),
             "exp_start": parse_date(row[col["Дата начала экспертизы"]]),
             "exp_done": parse_date(row[col["Дата получения заключения (завершения ) экспертизы"]]),
@@ -222,6 +236,8 @@ def load_data():
 
     cross, per, traj, kt_rows, kt_dates = [], [], {}, [], {}
     budget_alert = []
+    STAGE_EDGES = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
+    stage_gaps = {e: {"plan": [], "pay": []} for e in STAGE_EDGES}
 
     for f in sorted(ROOT.glob("*.xlsx")):
         if (
@@ -260,7 +276,7 @@ def load_data():
                     d = parse_date(row[4])
                     amt = parse_amt(row[5])
                     if d and amt:
-                        pays.append({"d": d, "amt": amt})
+                        pays.append({"d": d, "amt": amt, "advance": row[0] == "Предоплата"})
         pays.sort(key=lambda x: x["d"])
         total = sum(p["amt"] for p in pays)
         last = series[-1]
@@ -268,12 +284,17 @@ def load_data():
 
         pay_scale = pay_pct / total if (pay_pct is not None and total > 0) else None
 
-        cum = 0
+        cum = cum_adv = cum_reg = 0
         pi = 0
         pts = []
         for pt in series:
             while pi < len(pays) and pays[pi]["d"] <= pt["d"]:
-                cum += pays[pi]["amt"]
+                amt = pays[pi]["amt"]
+                cum += amt
+                if pays[pi]["advance"]:
+                    cum_adv += amt
+                else:
+                    cum_reg += amt
                 pi += 1
             pts.append(
                 {
@@ -282,8 +303,19 @@ def load_data():
                     "plan": round(pt["plan"], 1) if pt["plan"] is not None else None,
                     "pay": round(cum / 1e6, 1),
                     "payPct": round(cum * pay_scale, 1) if pay_scale is not None else None,
+                    "advPct": round(cum_adv * pay_scale, 1) if pay_scale is not None else None,
+                    "regPct": round(cum_reg * pay_scale, 1) if pay_scale is not None else None,
                 }
             )
+        for edge in STAGE_EDGES:
+            hit = next((p for p in pts if p["sg"] >= edge), None)
+            if hit is None:
+                continue
+            if hit["plan"] is not None:
+                stage_gaps[edge]["plan"].append(hit["sg"] - hit["plan"])
+            if hit["payPct"] is not None:
+                stage_gaps[edge]["pay"].append(hit["sg"] - hit["payPct"])
+
         if len(pts) > 36:
             step = math.ceil(len(pts) / 36)
             pts = pts[::step][:-1] + [pts[-1]]
@@ -306,15 +338,25 @@ def load_data():
         if fin and fin.get("osv2026") == 0:
             flags.append("не осваивает бюджет 2026")
 
+        exp_ref = info.get("exp_done") or exp.get("plan_end")
+        exp_marker = None
+        if exp_ref and pts:
+            exp_marker = min(
+                pts, key=lambda p: abs((datetime.strptime(p["d"], "%d.%m.%y") - exp_ref).days)
+            )["d"]
+
         kt_dates[uin] = {
             "exp_plan": fmt_date(exp.get("plan_end")),
             "exp_fact": fmt_date(exp.get("fact_end")),
             "exp_sl": fmt_date(info.get("exp_done")),
+            "exp_marker": exp_marker,
             "smr_start": fmt_date(smr.get("fact_start")),
             "ctr_fact": fmt_date(ctr.get("fact_start") or info.get("ctr_fact")),
             "rs_plan": fmt_date(rs.get("plan_end")),
             "rs_fact": fmt_date(rs.get("fact_end")),
         }
+
+        contractor = short_contractor(info.get("contractor"))
 
         kt_rows.append(
             {
@@ -328,6 +370,7 @@ def load_data():
                 "sg_pay_gap": sg_pay_gap,
                 "flags": flags,
                 "flag_n": len(flags),
+                "contractor": contractor,
             }
         )
 
@@ -341,6 +384,7 @@ def load_data():
                 "advance": pay_pct in ADVANCE_PCTS,
                 "pay": round(total / 1e6, 1),
                 "gap": sg_pay_gap,
+                "contractor": contractor,
             }
         )
         per.append(
@@ -380,6 +424,33 @@ def load_data():
                 }
             )
     budget_alert.sort(key=lambda x: -x["plan2026"])
+
+    by_contractor = {}
+    for k in kt_rows:
+        c = k["contractor"] or "Не указан"
+        e = by_contractor.setdefault(c, {"contractor": c, "objects": [], "n_no_budget2026": 0, "n_flags": 0})
+        no_bud = "не осваивает бюджет 2026" in k["flags"]
+        e["objects"].append({"name": k["name"], "full": k["full"], "sg": k["sg"], "no_budget2026": no_bud})
+        if no_bud:
+            e["n_no_budget2026"] += 1
+        if k["flags"]:
+            e["n_flags"] += 1
+    contractors = sorted(by_contractor.values(), key=lambda x: (-len(x["objects"]), x["contractor"]))
+
+    stage_analysis = []
+    for edge in STAGE_EDGES:
+        plan_vals = stage_gaps[edge]["plan"]
+        pay_vals = stage_gaps[edge]["pay"]
+        if not plan_vals and not pay_vals:
+            continue
+        stage_analysis.append(
+            {
+                "stage": edge,
+                "n": max(len(plan_vals), len(pay_vals)),
+                "plan_gap": round(median(plan_vals), 1) if plan_vals else None,
+                "pay_gap": round(median(pay_vals), 1) if pay_vals else None,
+            }
+        )
 
     valid = [s for s in cross if s["pct"] is not None and s["pay"] > 0]
     facts = [s["sg"] for s in valid]
@@ -434,6 +505,8 @@ def load_data():
             "n_no_budget2026": len(budget_alert),
         },
         "budget_alert": budget_alert,
+        "contractors": contractors,
+        "stage_analysis": stage_analysis,
         "kt_attention": kt_sorted[:10],
         "reg": {"a": round(a, 1), "b": round(b, 4), "r2": round(r2, 3)},
         "bins": bins,
@@ -453,6 +526,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 <title>СГ и выплаты — 47 школ</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
 <style>
   :root { --bg:#f4f3ef; --surface:#fff; --text:#1c1c1c; --muted:#555; --faint:#888;
     --line:#ddd9d0; --accent:#1a4d7a; --green:#2d6a4f;
@@ -527,6 +601,13 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       <thead><tr><th>Школа</th><th class="r">СГ</th><th class="r">План 2026, млн ₽</th></tr></thead>
       <tbody id="budgetAlert"></tbody>
     </table>
+  </div>
+
+  <div class="box">
+    <strong style="display:block;margin-bottom:8px">Главный вывод: разрыв растёт по ходу стройки, а не постоянный</strong>
+    <p class="note" style="margin:0 0 8px">По всем 48 школам смотрим не на календарные даты, а на этап готовности (10%, 20%, ... 100%) — и в момент, когда объект впервые доходит до этого этапа, смотрим, на сколько план и деньги от него отстают. Так можно сравнивать разные школы на одной шкале и увидеть, где именно теряются деньги и время.</p>
+    <div class="chart tall"><canvas id="cStage"></canvas></div>
+    <p class="note" id="stageNote" style="margin-top:8px"></p>
   </div>
 
   <div class="box mini">
@@ -605,6 +686,21 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     </div>
   </details>
 
+  <details id="secContractors">
+    <summary>По подрядчикам</summary>
+    <div class="detail-body">
+      <p class="note" style="margin-top:14px">Сгруппировали школы по подрядчику — видно, повторяются ли проблемы у одного и того же исполнителя на разных объектах, или это разовые случаи.</p>
+      <div class="tbl-wrap">
+        <table class="full">
+          <thead><tr>
+            <th>Подрядчик</th><th class="r">Объектов</th><th class="r">Не осваивают бюджет 2026</th><th>Объекты</th>
+          </tr></thead>
+          <tbody id="contractorsTbl"></tbody>
+        </table>
+      </div>
+    </div>
+  </details>
+
   <details id="secTable">
     <summary>Краткая таблица</summary>
     <div class="detail-body">
@@ -671,6 +767,12 @@ document.getElementById('budgetAlert').innerHTML = DATA.budget_alert.map(s =>
   `<tr><td title="${s.full}">${s.name}</td><td class="r">${s.sg}%</td><td class="r">${s.plan2026}</td></tr>`
 ).join('');
 
+document.getElementById('contractorsTbl').innerHTML = DATA.contractors.map(c => {
+  const objs = c.objects.map(o => o.name + (o.no_budget2026 ? ' *' : '')).join(', ');
+  const allStuck = c.objects.length > 1 && c.n_no_budget2026 === c.objects.length;
+  return `<tr${allStuck ? ' style="background:#fdecea"' : ''}><td>${c.contractor}</td><td class="r">${c.objects.length}</td><td class="r">${c.n_no_budget2026 || '—'}</td><td>${objs}</td></tr>`;
+}).join('');
+
 document.getElementById('ktTbl').innerHTML = [...DATA.per].sort((a,b)=>(b.flags?.length||0)-(a.flags?.length||0)).map(p=>{
   const k = DATA.kt_dates[p.uin]||{};
   const exp = [k.exp_sl,k.exp_plan,k.exp_fact].filter(Boolean).join(' / ') || '—';
@@ -696,11 +798,17 @@ function drawTraj(uin) {
   document.getElementById('tagR').textContent = m&&m.r!=null ? 'корр. '+m.r.toFixed(2) : '';
   document.getElementById('metaSchool').textContent = m ? `${m.name}: ${m.sg}% факт, ${m.plan??'—'}% план, ${m.pct??'—'}% выпл.` : '';
   document.getElementById('ktLine').textContent = `Экспертиза ${k.exp_sl||k.exp_plan||'—'}, СМР с ${k.smr_start||'—'}, контракт ${k.ctr_fact||'—'}` + (m&&m.flags?.length ? '. '+m.flags.join(', ') : '');
+  const annotations = {};
+  if (k.exp_marker) {
+    annotations.exp = { type:'line', xMin:k.exp_marker, xMax:k.exp_marker, borderColor:'#a04ea3', borderWidth:2, borderDash:[3,3],
+      label:{ display:true, content:'Экспертиза', position:'start', backgroundColor:'#a04ea3', font:{size:10} } };
+  }
   const cfg = { type:'line', data:{ labels:rows.map(r=>r.d), datasets:[
     { label:'Факт', data:rows.map(r=>r.sg), borderColor:blue, tension:.25, pointRadius:2 },
     { label:'План', data:rows.map(r=>r.plan), borderColor:blue, borderDash:[5,4], tension:.25, pointRadius:0 },
-    { label:'Выплаты', data:rows.map(r=>r.payPct), borderColor:green, tension:.25, pointRadius:2 }
-  ]}, options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}, datalabels:{display:false}}, scales:{ y:{min:0,max:100} } } };
+    { label:'Основные платежи', data:rows.map(r=>r.regPct), borderColor:green, tension:.25, pointRadius:2 },
+    { label:'Аванс', data:rows.map(r=>r.advPct), borderColor:green, borderDash:[2,2], tension:.25, pointRadius:0 }
+  ]}, options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}, datalabels:{display:false}, annotation:{annotations}}, scales:{ y:{min:0,max:100} } } };
   if(chartTraj) chartTraj.destroy(); chartTraj = new Chart(document.getElementById('cTraj'), cfg);
 }
 sel.onchange = e => drawTraj(e.target.value);
@@ -748,7 +856,26 @@ function initDetailCharts() {
   charts.traj = true;
 }
 
+function initStage() {
+  const s = DATA.stage_analysis;
+  new Chart(document.getElementById('cStage'), {
+    type:'line',
+    data:{ labels:s.map(x=>x.stage+'%'), datasets:[
+      { label:'СГ обгоняет выплаты, п.п.', data:s.map(x=>x.pay_gap), borderColor:green, backgroundColor:green, tension:.2, pointRadius:4 },
+      { label:'Факт отстаёт от плана, п.п.', data:s.map(x=>x.plan_gap), borderColor:blue, backgroundColor:blue, borderDash:[5,4], tension:.2, pointRadius:4 }
+    ]},
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}, datalabels:{display:false},
+      tooltip:{callbacks:{afterLabel:c=>'школ на этом этапе: '+s[c.dataIndex].n}}},
+      scales:{ x:{title:{display:true,text:'Этап готовности (СГ)'}}, y:{title:{display:true,text:'Разрыв, п.п.'}} } }
+  });
+  const first = s.find(x=>x.n>=10), last = [...s].reverse().find(x=>x.n>=10);
+  document.getElementById('stageNote').textContent = first && last
+    ? `На старте (${first.stage}% готовности) деньги обгоняют стройку на ${Math.abs(first.pay_gap)} п.п., а к ${last.stage}% готовности стройка уже обгоняет деньги на ${last.pay_gap} п.п. Разрыв не постоянный — он растёт по ходу стройки, особенно заметно после 60–70% готовности. Пунктирная линия (план) показывает обратное: сильнее всего от своего же плана школы отстают в середине стройки, а к концу почти нагоняют.`
+    : '';
+}
+
 initMini();
+initStage();
 document.getElementById('secCharts').addEventListener('toggle', e => { if(e.target.open) initDetailCharts(); });
 </script>
 </body>
