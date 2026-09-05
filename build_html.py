@@ -91,24 +91,6 @@ def corr(xs, ys):
     return num / (dx * dy)
 
 
-def spearman(xs, ys):
-    def ranks(a):
-        order = sorted(range(len(a)), key=lambda i: a[i])
-        r = [0.0] * len(a)
-        i = 0
-        while i < len(a):
-            j = i
-            while j + 1 < len(a) and a[order[j + 1]] == a[order[i]]:
-                j += 1
-            avg = (i + j) / 2 + 1
-            for k in range(i, j + 1):
-                r[order[k]] = avg
-            i = j + 1
-        return r
-
-    return corr(ranks(xs), ranks(ys))
-
-
 def linreg(xs, ys):
     n = len(xs)
     mx, my = sum(xs) / n, sum(ys) / n
@@ -460,35 +442,17 @@ def load_data():
     varying.sort(key=lambda x: -(x["r"] or -1))
     rs_corr = [p["r"] for p in varying]
 
-    bins = []
-    for lo, hi in [(0, 40), (40, 60), (60, 80), (80, 101)]:
-        grp = [s["sg"] for s in cross if s["pct"] is not None and lo <= s["pct"] < hi]
-        if grp:
-            bins.append(
-                {
-                    "label": f"{lo}–{hi}%",
-                    "n": len(grp),
-                    "mean_sg": round(sum(grp) / len(grp), 1),
-                }
-            )
-
     gaps = [s["gap"] for s in cross if s["gap"] is not None]
     kt_sorted = sorted(kt_rows, key=lambda x: (-x["flag_n"], -(x["sg_pay_gap"] or 0)))
-
-    pearson = corr(facts, pcts)
 
     no_adv = [s for s in valid if not s["advance"]]
     facts_na = [s["sg"] for s in no_adv]
     pcts_na = [s["pct"] for s in no_adv]
     pearson_na = corr(facts_na, pcts_na) if len(no_adv) >= 3 else None
-    n_advance = sum(1 for s in cross if s["advance"])
 
     return {
         "stats": {
             "n": len(valid),
-            "pearson_sg_pay_pct": round(pearson, 3),
-            "pearson_p": two_tailed_p(pearson, len(valid)),
-            "spearman_sg_pay_pct": round(spearman(facts, pcts), 3),
             "median_r": round(median(rs_corr), 3) if rs_corr else 0,
             "n_varying": len(varying),
             "n_sg_ahead": sum(1 for g in gaps if g > 55),
@@ -498,7 +462,6 @@ def load_data():
             ),
             "n_smr_before_exp": sum(1 for p in per if "стройка до экспертизы" in p.get("flags", [])),
             "n_kt_issues": sum(1 for p in per if any(f in p.get("flags", []) for f in ("стройка до экспертизы", "экспертиза не бьётся с КСГ", "РС опоздал", "нет заключения экспертизы"))),
-            "n_advance": n_advance,
             "n_no_advance": len(no_adv),
             "pearson_no_advance": round(pearson_na, 3) if pearson_na is not None else None,
             "pearson_no_advance_p": two_tailed_p(pearson_na, len(no_adv)),
@@ -508,8 +471,7 @@ def load_data():
         "contractors": contractors,
         "stage_analysis": stage_analysis,
         "kt_attention": kt_sorted[:10],
-        "reg": {"a": round(a, 1), "b": round(b, 4), "r2": round(r2, 3)},
-        "bins": bins,
+        "reg": {"a": round(a, 1), "b": round(b, 4)},
         "cross": cross,
         "per": sorted(per, key=lambda x: -(x["r"] if x["r"] is not None else -1)),
         "traj": traj,
@@ -542,7 +504,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .kpi { background:var(--surface); border:1px solid var(--line); border-radius:6px; padding:12px 14px }
   .kpi .n { font-size:1.35rem; font-weight:700; color:var(--accent); line-height:1.2 }
   .kpi .l { font-size:.75rem; color:var(--muted); margin-top:4px }
-  .chart-sm { position:relative; height:220px; margin-top:8px }
   .chart { position:relative; height:280px; margin-top:10px }
   .chart.tall { height:340px }
   .note { font-size:.82rem; color:var(--faint); margin:6px 0 0 }
@@ -558,7 +519,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   details[open] > summary::after { content:'−' }
   details > summary:hover { background:#faf9f6 }
   .detail-body { padding:0 16px 16px; border-top:1px solid var(--line) }
-  .cols2 { display:grid; grid-template-columns:1fr 1fr; gap:14px }
   select { font:inherit; padding:6px 10px; border:1px solid var(--line); border-radius:4px; background:#fff; max-width:100% }
   .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:10px 0 }
   .tag { font-size:.75rem; padding:3px 9px; background:var(--info-bg); border:1px solid var(--line); border-radius:99px; color:var(--accent) }
@@ -571,7 +531,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .flag.warn { background:#fdecea; border-color:#e8a8a0; color:#8a2a22 }
   .kpis.four { grid-template-columns:repeat(4,1fr) }
   @media(max-width:900px) { .kpis.four { grid-template-columns:repeat(2,1fr) } }
-  @media(max-width:700px) { .kpis,.kpis.four,.cols2 { grid-template-columns:1fr } }
+  @media(max-width:700px) { .kpis,.kpis.four { grid-template-columns:1fr } }
 </style>
 </head>
 <body>
@@ -618,46 +578,21 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     </table>
   </div>
 
-  <div class="box">
-    <strong style="display:block;margin-bottom:8px">Готовность и выплаты по школам</strong>
-    <div class="chart-sm"><canvas id="cMini"></canvas></div>
-    <p class="note">Каждая точка — школа (наведите курсор, чтобы увидеть, какая). Серые точки — это школы с типовым авансом (30% или 49%), а не с индивидуально посчитанной оплатой. Разброс без явного порядка — по проценту выплат нельзя предсказать готовность.</p>
-  </div>
-
-  <div class="box">
-    <strong style="display:block;margin-bottom:8px">Главный вывод про деньги и готовность</strong>
-    <ul class="brief">
-      <li><strong>Между школами</strong> связи почти нет: у кого готовность выше, не значит, что и заплатили больше — это подтверждают оба графика ниже (точки и столбики). <span class="note" style="margin:0">(r=<span id="mA"></span>, p≈<span id="mB"></span> — статистически не отличается от нуля)</span></li>
-      <li>А если следить за <strong>одной и той же школой</strong> во времени — там всё иначе: готовность и накопленные выплаты растут почти синхронно (это видно на графике «Одна школа» ниже). <span class="note" style="margin:0">(медианная корреляция <span id="mC"></span> по <span id="mD"></span> школам)</span></li>
-      <li>Разница простая: «сколько денег уже закрыто актами по конкретной стройке» — не то же самое, что «у кого выше готовность по сравнению с другими школами».</li>
-      <li>На графиках ниже видно, что точки стоят не сплошным облаком, а двумя плотными столбиками — у <span id="mE"></span> школ «% выплат» это ровно 30% или 49%. Это типовые проценты аванса, а не индивидуально посчитанный факт оплаты (на графике справа они серые). Если убрать их и оставить только <span id="mF"></span> школ, где процент явно свой, связь не появляется и там: r=<span id="mG"></span>, p≈<span id="mH"></span> — то есть дело не в авансах, связи действительно нет.</li>
-    </ul>
-    <details style="margin-top:10px">
-      <summary style="cursor:pointer;font-size:.84rem;color:var(--accent)">Что значат r и p?</summary>
-      <ul class="brief" style="margin-top:8px">
-        <li><strong>r</strong> — насколько сильно две величины растут вместе, от −1 до +1. 0 — совсем никакой связи, точки разбросаны как попало. +1 — идеальная связь: одно растёт, второе растёт ровно так же. −1 — идеальная обратная связь. У нас r=0.18 — это почти 0, то есть связь еле заметна.</li>
-        <li><strong>p</strong> — какова вероятность увидеть такое же r случайно, если на самом деле никакой связи нет вообще. Маленький p (меньше 0.05, то есть 5%) — связь, скорее всего, настоящая. Большой p — это вполне может быть просто совпадение на нашей выборке из школ. У нас p≈0.21 — то есть 21% шанс, что это случайность, а не реальная связь. Это намного выше порога в 5%, поэтому уверенно говорить «связь есть» нельзя.</li>
-      </ul>
-    </details>
-  </div>
-
   <details id="secCharts">
     <summary>Графики по школе</summary>
     <div class="detail-body">
-      <p class="note" style="margin-top:14px">Оба графика ниже показывают одно и то же с разных сторон: связи между готовностью и выплатами почти нет.</p>
-      <div class="cols2">
-        <div>
-          <strong>Готовность и выплаты</strong>
-          <div class="chart"><canvas id="cScatter"></canvas></div>
-          <p class="note">Точка — школа (наведите курсор, чтобы узнать название). Серые — типовой аванс (30% или 49%), не факт оплаты. Пунктир — общий тренд по всем точкам: он почти горизонтальный, то есть роста почти нет.</p>
-        </div>
-        <div>
-          <strong>Средняя СГ в группах по выплатам</strong>
-          <div class="chart"><canvas id="cBins"></canvas></div>
-          <p class="note">Школы разбиты на 4 группы по проценту выплат. Столбики — средняя готовность в группе. Они почти одной высоты: больше заплатили — не значит выше готовность.</p>
-        </div>
-      </div>
-      <strong>Одна школа</strong>
+      <strong style="display:block;margin-top:14px">Готовность и выплаты</strong>
+      <div class="chart"><canvas id="cScatter"></canvas></div>
+      <p class="note">Точка — школа (наведите курсор, чтобы узнать название). Серые — типовой аванс (30% или 49%), не индивидуально посчитанный факт оплаты. Пунктир — общий тренд по всем точкам: он почти горизонтальный, роста почти нет.</p>
+      <p class="note">Даже если убрать авансы и оставить только <span id="mF"></span> школ с индивидуальным процентом, связь всё равно не появляется: r=<span id="mG"></span>, p≈<span id="mH"></span>. А вот <strong>внутри одной школы</strong> во времени готовность и выплаты растут почти синхронно — медианная корреляция <span id="mC"></span> по <span id="mD"></span> школам (см. «Одна школа» ниже). Разница простая: «сколько уже закрыто актами по этой стройке» — не то же самое, что «у кого выше готовность по сравнению с другими школами».</p>
+      <details style="margin-top:6px">
+        <summary style="cursor:pointer;font-size:.84rem;color:var(--accent)">Что значат r и p?</summary>
+        <ul class="brief" style="margin-top:8px">
+          <li><strong>r</strong> — насколько сильно две величины растут вместе, от −1 до +1. 0 — совсем никакой связи, точки разбросаны как попало. +1 — идеальная связь: одно растёт, второе растёт ровно так же. −1 — идеальная обратная связь.</li>
+          <li><strong>p</strong> — какова вероятность увидеть такое же r случайно, если на самом деле никакой связи нет вообще. Маленький p (меньше 0.05, то есть 5%) — связь, скорее всего, настоящая. Большой p — это вполне может быть просто совпадение на нашей выборке школ.</li>
+        </ul>
+      </details>
+      <strong style="display:block;margin-top:18px">Одна школа</strong>
       <p class="note">Звёздочка (*) в списке — у школы есть хотя бы одно замечание (см. раздел «Все школы: даты и разрывы» ниже).</p>
       <div class="row">
         <select id="selSchool"></select>
@@ -732,7 +667,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 <script>
 const DATA = __DATA__;
 const blue='#1a4d7a', blueL='rgba(26,77,122,.35)', green='#2d6a4f';
-const charts = { mini:false, scatter:false, bins:false, traj:false };
+const charts = { scatter:false, traj:false };
 
 function flagsHtml(arr) {
   if(!arr||!arr.length) return '—';
@@ -744,11 +679,8 @@ document.getElementById('k2').textContent = '+' + DATA.stats.median_gap;
 document.getElementById('k4').textContent = DATA.stats.n_sg_behind_plan;
 document.getElementById('k5').textContent = DATA.stats.n_smr_before_exp;
 
-document.getElementById('mA').textContent = DATA.stats.pearson_sg_pay_pct.toFixed(2);
-document.getElementById('mB').textContent = DATA.stats.pearson_p!=null ? DATA.stats.pearson_p.toFixed(2) : '—';
 document.getElementById('mC').textContent = DATA.stats.median_r.toFixed(2);
 document.getElementById('mD').textContent = DATA.stats.n_varying;
-document.getElementById('mE').textContent = DATA.stats.n_advance;
 document.getElementById('mF').textContent = DATA.stats.n_no_advance;
 document.getElementById('mG').textContent = DATA.stats.pearson_no_advance!=null ? DATA.stats.pearson_no_advance.toFixed(2) : '—';
 document.getElementById('mH').textContent = DATA.stats.pearson_no_advance_p!=null ? DATA.stats.pearson_no_advance_p.toFixed(2) : '—';
@@ -813,24 +745,9 @@ function drawTraj(uin) {
 }
 sel.onchange = e => drawTraj(e.target.value);
 
-function initMini() {
-  if(charts.mini) return; charts.mini = true;
-  const pts = DATA.cross.filter(s=>s.pct!=null);
-  const mk = s => ({x:s.pct,y:s.sg,name:s.name,adv:s.advance});
-  new Chart(document.getElementById('cMini'), {
-    type:'scatter',
-    data:{ datasets:[
-      { label:'Свой процент', data:pts.filter(s=>!s.advance).map(mk), backgroundColor:'rgba(26,77,122,.75)', pointRadius:4 },
-      { label:'Аванс (30% или 49%)', data:pts.filter(s=>s.advance).map(mk), backgroundColor:'rgba(140,140,140,.6)', pointRadius:4 }
-    ]},
-    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}, datalabels:{display:false}, tooltip:{callbacks:{label:c=>`${c.raw.name}: выплаты ${c.raw.x}%${c.raw.adv?' (аванс)':''}, СГ ${c.raw.y}%`}}},
-      scales:{ x:{title:{display:true,text:'Выплаты, %'},min:20,max:100,ticks:{maxTicksLimit:5}}, y:{title:{display:true,text:'СГ, %'},min:70,max:100,ticks:{maxTicksLimit:5}} } }
-  });
-}
-
 function initDetailCharts() {
   if(charts.scatter) return;
-  charts.scatter = charts.bins = true;
+  charts.scatter = true;
   const pts = DATA.cross.filter(s=>s.pct!=null);
   const mk2 = s => ({x:s.pct,y:s.sg,name:s.name,adv:s.advance});
   const line=[]; for(let x=25;x<=95;x+=5) line.push({x,y:DATA.reg.a+DATA.reg.b*x});
@@ -844,13 +761,6 @@ function initDetailCharts() {
     options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}, datalabels:{display:false},
       tooltip:{callbacks:{label:c=>c.raw.name ? `${c.raw.name}: выплаты ${c.raw.x}%${c.raw.adv?' (аванс)':''}, СГ ${c.raw.y}%` : 'тренд'}}},
       scales:{ x:{title:{display:true,text:'Выплаты, %'},min:20,max:100}, y:{title:{display:true,text:'СГ, %'},min:70,max:100} } }
-  });
-  new Chart(document.getElementById('cBins'), {
-    type:'bar',
-    data:{ labels:DATA.bins.map(b=>b.label+' ('+b.n+' шк.)'), datasets:[{ data:DATA.bins.map(b=>b.mean_sg), backgroundColor:blue }] },
-    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false},
-      datalabels:{anchor:'end',align:'end',color:'#555',font:{size:11},formatter:v=>v.toFixed(1)+'%'} },
-      scales:{ y:{min:0,max:100,title:{display:true,text:'СГ, %'}} } }
   });
   drawTraj(sel.value);
   charts.traj = true;
@@ -874,7 +784,6 @@ function initStage() {
     : '';
 }
 
-initMini();
 initStage();
 document.getElementById('secCharts').addEventListener('toggle', e => { if(e.target.open) initDetailCharts(); });
 </script>
