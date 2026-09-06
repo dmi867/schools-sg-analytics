@@ -434,6 +434,41 @@ def load_data():
             }
         )
 
+    stage_by_edge = {s["stage"]: s["pay_gap"] for s in stage_analysis if s["pay_gap"] is not None}
+
+    red_zone = []
+    for k in kt_rows:
+        if k["sg_pay_gap"] is None:
+            continue
+        stage = max((e for e in STAGE_EDGES if e <= k["sg"] and e in stage_by_edge), default=None)
+        if stage is None:
+            continue
+        deviation = round(k["sg_pay_gap"] - stage_by_edge[stage], 1)
+        red_zone.append(
+            {
+                "uin": k["uin"],
+                "name": k["name"],
+                "full": k["full"],
+                "sg": k["sg"],
+                "gap": k["sg_pay_gap"],
+                "stage": stage,
+                "stage_median": stage_by_edge[stage],
+                "deviation": deviation,
+            }
+        )
+    red_zone.sort(key=lambda x: -x["deviation"])
+
+    advance_only = []
+    for k in kt_rows:
+        t = traj.get(k["uin"])
+        if not t:
+            continue
+        last_pt = t[-1]
+        adv, reg = last_pt.get("advPct"), last_pt.get("regPct")
+        if adv and adv > 0 and not reg:
+            advance_only.append({"uin": k["uin"], "name": k["name"], "full": k["full"], "sg": k["sg"], "advPct": adv})
+    advance_only.sort(key=lambda x: -x["advPct"])
+
     valid = [s for s in cross if s["pct"] is not None and s["pay"] > 0]
     facts = [s["sg"] for s in valid]
     pcts = [s["pct"] for s in valid]
@@ -470,6 +505,8 @@ def load_data():
         "budget_alert": budget_alert,
         "contractors": contractors,
         "stage_analysis": stage_analysis,
+        "red_zone": red_zone,
+        "advance_only": advance_only,
         "kt_attention": kt_sorted[:10],
         "reg": {"a": round(a, 1), "b": round(b, 4)},
         "cross": cross,
@@ -537,84 +574,72 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 <body>
 <div class="wrap">
   <h1>СГ и выплаты</h1>
-  <p class="sub">47 школ, август 2026</p>
+  <p class="sub">48 школ, август 2026 — методика управления финансированием портфеля</p>
 
-  <ul class="brief">
-    <li>У <span id="b1"></span> школ готовность ниже плана больше чем на 5 п.п.</li>
-    <li>У <span id="b2"></span> школ готовность заметно выше того, что уже заплатили.</li>
-    <li>У <span id="b3"></span> школ стройка началась раньше, чем в КСГ стоит экспертиза.</li>
-    <li><strong>У <span id="b4"></span> школ в 2026 году не потрачено ни рубля из утверждённого бюджета</strong> — см. блок ниже.</li>
-    <li>Про РС: в КСГ по школам такой точки нет, смотрим контракт и экспертизу.</li>
-  </ul>
+  <div class="box" id="methodBox">
+    <p class="note" style="margin:0 0 10px">Ниже — не мониторинг стройготовности, а взгляд с точки зрения денег: когда давать финансирование, когда придержать и на что смотреть в первую очередь. Каждый пункт — сразу с тем, что его подтверждает на этом портфеле.</p>
 
-  <div class="kpis four">
-    <div class="kpi"><div class="n" id="k1"></div><div class="l">готовность выше выплат</div></div>
-    <div class="kpi"><div class="n" id="k2"></div><div class="l">обычный разрыв, п.п.</div></div>
-    <div class="kpi"><div class="n" id="k4"></div><div class="l">факт ниже плана</div></div>
-    <div class="kpi"><div class="n" id="k5"></div><div class="l">стройка до экспертизы</div></div>
-  </div>
-
-  <div class="box" style="background:#fdecea;border-color:#e8a8a0">
-    <strong style="display:block;margin-bottom:6px;color:#8a2a22">⚠ <span id="k6"></span> школ не осваивают бюджет 2026 года — деньги утверждены, но не выплачены</strong>
-    <p class="note" style="margin:0 0 8px">Это не аванс и не обычная задержка — по этим объектам с начала 2026 года кассовых выплат не было вообще (0%), при этом строительство почти завершено (готовность 80–100%). Деньги на этот год утверждены, просто не идут.</p>
-    <table>
-      <thead><tr><th>Школа</th><th class="r">СГ</th><th class="r">План 2026, млн ₽</th></tr></thead>
-      <tbody id="budgetAlert"></tbody>
-    </table>
-  </div>
-
-  <div class="box">
-    <strong style="display:block;margin-bottom:8px">Главный вывод: разрыв растёт по ходу стройки, а не постоянный</strong>
-    <p class="note" style="margin:0 0 8px">По всем 48 школам смотрим не на календарные даты, а на этап готовности (10%, 20%, ... 100%) — и в момент, когда объект впервые доходит до этого этапа, смотрим, на сколько план и деньги от него отстают. Так можно сравнивать разные школы на одной шкале и увидеть, где именно теряются деньги и время.</p>
+    <strong style="display:block;margin-top:16px;font-size:1.05rem">1. Эталонная кривая вместо разовой цифры</strong>
+    <p class="note">Разрыв «СГ минус выплаты» — это не ошибка и не всегда плохо: он закономерно растёт по ходу стройки почти у всех объектов (аванс в начале — это нормально, оплата по актам после экспертизы отстаёт — тоже ожидаемо). Ориентир — не «оплачено меньше 100%», а «отклоняется ли конкретный объект от того, что типично для его этапа готовности». Это видно по всем 48 школам сразу, если сравнивать их не по календарным датам, а по этапу готовности (10%, 20%, ... 100%):</p>
     <div class="chart tall"><canvas id="cStage"></canvas></div>
     <p class="note" id="stageNote" style="margin-top:8px"></p>
-  </div>
 
-  <details id="secMethod">
-    <summary>Методика управления финансированием портфеля</summary>
-    <div class="detail-body">
-      <p class="note" style="margin-top:14px">Ниже — не мониторинг стройготовности, а взгляд с точки зрения денег: когда давать финансирование, когда придержать и на что смотреть в первую очередь. Построено на графике выше и на разрезах по школам/подрядчикам ниже.</p>
-
-      <strong style="display:block;margin-top:14px">1. Эталонная кривая вместо разовой цифры</strong>
-      <p class="note">Разрыв «СГ минус выплаты» — это не ошибка и не всегда плохо: он закономерно растёт по ходу стройки почти у всех объектов (аванс в начале — это нормально, оплата по актам после экспертизы отстаёт — тоже ожидаемо). Ориентир — не «оплачено меньше 100%», а «отклоняется ли конкретный объект от того, что типично для его этапа готовности».</p>
-
-      <strong style="display:block;margin-top:14px">2. Правило красной зоны</strong>
-      <p class="note">На этапе ~90% готовности типичный разрыв по порталу — около <span id="mth90"></span> п.п. Если у объекта на том же этапе разрыв заметно больше — это уже не типовой лаг платёжного цикла, а сигнал разобраться отдельно: не подаются акты, спор с подрядчиком, затор у заказчика.</p>
-
-      <strong style="display:block;margin-top:14px">3. Нулевое освоение — отдельный, более жёсткий триггер</strong>
-      <p class="note"><span id="mth0"></span> школ показывают 0% кассового исполнения бюджета текущего года при уже утверждённом финансировании — это не про этап готовности вообще, деньги просто не двигаются. Такие объекты не ждут конца года — они эскалируются сразу, отдельным списком (см. блок выше).</p>
-
-      <strong style="display:block;margin-top:14px">4. Аванс — это не «дать ещё денег»</strong>
-      <p class="note">Если по объекту идут только авансовые платежи и ни одного основного (по актам) — значит, вопрос не в объёме финансирования, а в том, что документы о выполненных работах не доходят до оплаты. Дальнейшее решение — не наращивать аванс, а разбираться, почему не закрываются акты. Ориентир по порталу: аванс оправдан на ранней стадии (примерно до 30–40% готовности), дальше приоритет должен смещаться на основные платежи.</p>
-
-      <strong style="display:block;margin-top:14px">5. Смотреть на подрядчика, а не только на объект</strong>
-      <p class="note" id="mthContr">—</p>
-
-      <strong style="display:block;margin-top:14px">Что это даёт на практике</strong>
-      <ul class="brief">
-        <li>Перед очередным траншем — сверять этап готовности объекта с эталонной кривой, а не только со сроком по контракту.</li>
-        <li>Держать список нулевого освоения как еженедельный контроль-лист для эскалации, а не ждать годового отчёта.</li>
-        <li>Решения по системным подрядчикам принимать на уровне договора, а не по каждому объекту отдельно.</li>
-        <li>В переговорах с подрядчиком: «хотите быстрее получать деньги — подавайте акты вовремя» — это и есть рычаг ускорения, а не дополнительное финансирование.</li>
-      </ul>
-
-      <strong style="display:block;margin-top:14px">Ограничения</strong>
-      <p class="note">Построено на 48 объектах капремонта школ — на другие типы объектов переносить с проверкой. Разброс вокруг эталонной кривой большой (см. график выше), поэтому «красная зона» — это ориентир для разбора, а не жёсткий автоматический триггер. Данные по подрядчикам и бюджету 2026 сверены вручную один раз и не обновляются автоматически вместе с остальным отчётом.</p>
+    <strong style="display:block;margin-top:20px;font-size:1.05rem">2. Правило красной зоны</strong>
+    <p class="note">На этапе ~90% готовности типичный разрыв по портфелю — около <span id="mth90"></span> п.п. (линия выше). Школы ниже — не просто с большим разрывом, а с разрывом заметно больше типичного для их же этапа готовности. Это и есть сигнал разобраться отдельно: не подаются акты, спор с подрядчиком, затор у заказчика — а не типовой лаг платёжного цикла.</p>
+    <div class="tbl-wrap" style="max-height:280px">
+      <table class="full">
+        <thead><tr><th>Школа</th><th class="r">СГ</th><th class="r">Разрыв</th><th class="r">Типично для этапа</th><th class="r">Отклонение</th></tr></thead>
+        <tbody id="redZoneTbl"></tbody>
+      </table>
     </div>
-  </details>
 
-  <div class="box mini">
-    <strong style="display:block;margin-bottom:8px">Кого смотреть первым</strong>
-    <table>
-      <thead><tr><th>Школа</th><th class="r">СГ</th><th class="r">План</th><th class="r">Выпл.</th><th>Что не так</th></tr></thead>
-      <tbody id="ktAttn"></tbody>
-    </table>
+    <strong style="display:block;margin-top:20px;font-size:1.05rem">3. Нулевое освоение — отдельный, более жёсткий триггер</strong>
+    <p class="note"><span id="mth0"></span> школ показывают 0% кассового исполнения бюджета текущего года при уже утверждённом финансировании — это не про этап готовности вообще, деньги просто не двигаются. Такие объекты не ждут конца года — они эскалируются сразу, отдельным списком:</p>
+    <div class="box" style="background:#fdecea;border-color:#e8a8a0;margin:8px 0 0">
+      <strong style="display:block;margin-bottom:6px;color:#8a2a22">⚠ <span id="k6"></span> школ не осваивают бюджет 2026 года — деньги утверждены, но не выплачены</strong>
+      <p class="note" style="margin:0 0 8px">По этим объектам с начала 2026 года кассовых выплат не было вообще (0%), при этом строительство почти завершено (готовность 80–100%). Деньги на этот год утверждены, просто не идут.</p>
+      <table>
+        <thead><tr><th>Школа</th><th class="r">СГ</th><th class="r">План 2026, млн ₽</th></tr></thead>
+        <tbody id="budgetAlert"></tbody>
+      </table>
+    </div>
+
+    <strong style="display:block;margin-top:20px;font-size:1.05rem">4. Аванс — это не «дать ещё денег»</strong>
+    <p class="note">Если по объекту идут только авансовые платежи и ни одного основного (по актам) — значит, вопрос не в объёме финансирования, а в том, что документы о выполненных работах не доходят до оплаты. Дальнейшее решение — не наращивать аванс, а разбираться, почему не закрываются акты. На портфеле таких школ — <span id="advOnlyN"></span> из 48, среди них есть готовые почти на 100%:</p>
+    <div class="tbl-wrap" style="max-height:220px">
+      <table class="full">
+        <thead><tr><th>Школа</th><th class="r">СГ</th><th class="r">Получено (аванс), %</th></tr></thead>
+        <tbody id="advOnlyTbl"></tbody>
+      </table>
+    </div>
+
+    <strong style="display:block;margin-top:20px;font-size:1.05rem">5. Смотреть на подрядчика, а не только на объект</strong>
+    <p class="note" id="mthContr">—</p>
+    <div class="tbl-wrap">
+      <table class="full">
+        <thead><tr>
+          <th>Подрядчик</th><th class="r">Объектов</th><th class="r">Не осваивают бюджет 2026</th><th>Объекты</th>
+        </tr></thead>
+        <tbody id="contractorsTbl"></tbody>
+      </table>
+    </div>
+
+    <strong style="display:block;margin-top:20px;font-size:1.05rem">Что это даёт на практике</strong>
+    <ul class="brief">
+      <li>Перед очередным траншем — сверять этап готовности объекта с эталонной кривой, а не только со сроком по контракту.</li>
+      <li>Держать список нулевого освоения как еженедельный контроль-лист для эскалации, а не ждать годового отчёта.</li>
+      <li>Решения по системным подрядчикам принимать на уровне договора, а не по каждому объекту отдельно.</li>
+      <li>В переговорах с подрядчиком: «хотите быстрее получать деньги — подавайте акты вовремя» — это и есть рычаг ускорения, а не дополнительное финансирование.</li>
+    </ul>
+
+    <strong style="display:block;margin-top:16px">Ограничения</strong>
+    <p class="note">Построено на 48 объектах капремонта школ — на другие типы объектов переносить с проверкой. Разброс вокруг эталонной кривой большой, поэтому «красная зона» — это ориентир для разбора, а не жёсткий автоматический триггер. Данные по подрядчикам и бюджету 2026 сверены вручную один раз и не обновляются автоматически вместе с остальным отчётом.</p>
   </div>
 
-  <details id="secCharts">
-    <summary>Графики по школе</summary>
+  <details id="secCharts" open>
+    <summary>Графики: готовность и выплаты по портфелю</summary>
     <div class="detail-body">
-      <strong style="display:block;margin-top:14px">Готовность и выплаты</strong>
+      <strong style="display:block;margin-top:14px">Готовность и выплаты между школами</strong>
       <div class="chart"><canvas id="cScatter"></canvas></div>
       <p class="note">Точка — школа (наведите курсор, чтобы узнать название). Серые — типовой аванс (30% или 49%), не индивидуально посчитанный факт оплаты. Пунктир — общий тренд по всем точкам: он почти горизонтальный, роста почти нет.</p>
       <p class="note">Даже если убрать авансы и оставить только <span id="mF"></span> школ с индивидуальным процентом, связь всё равно не появляется: r=<span id="mG"></span>, p≈<span id="mH"></span>. А вот <strong>внутри одной школы</strong> во времени готовность и выплаты растут почти синхронно — медианная корреляция <span id="mC"></span> по <span id="mD"></span> школам (см. «Одна школа» ниже). Разница простая: «сколько уже закрыто актами по этой стройке» — не то же самое, что «у кого выше готовность по сравнению с другими школами».</p>
@@ -638,9 +663,29 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     </div>
   </details>
 
-  <details id="secKt">
-    <summary>Все школы: даты и разрывы</summary>
+  <details id="secOther">
+    <summary>Всё остальное: показатели, полные таблицы, контекст</summary>
     <div class="detail-body">
+      <ul class="brief" style="margin-top:14px">
+        <li>У <span id="b1"></span> школ готовность ниже плана больше чем на 5 п.п.</li>
+        <li>У <span id="b2"></span> школ разрыв «готовность минус выплаты» больше 55 п.п. по фиксированному порогу (для отклонения от типичного по этапу — см. «красную зону» в методике выше).</li>
+        <li>У <span id="b3"></span> школ стройка началась раньше, чем в КСГ стоит экспертиза.</li>
+        <li>Про РС: в КСГ по школам такой точки нет, смотрим контракт и экспертизу.</li>
+      </ul>
+      <div class="kpis four">
+        <div class="kpi"><div class="n" id="k1"></div><div class="l">готовность выше выплат</div></div>
+        <div class="kpi"><div class="n" id="k2"></div><div class="l">обычный разрыв, п.п.</div></div>
+        <div class="kpi"><div class="n" id="k4"></div><div class="l">факт ниже плана</div></div>
+        <div class="kpi"><div class="n" id="k5"></div><div class="l">стройка до экспертизы</div></div>
+      </div>
+
+      <strong style="display:block;margin-top:16px;margin-bottom:8px">Кого смотреть первым (по всем замечаниям, не только по деньгам)</strong>
+      <table class="mini">
+        <thead><tr><th>Школа</th><th class="r">СГ</th><th class="r">План</th><th class="r">Выпл.</th><th>Что не так</th></tr></thead>
+        <tbody id="ktAttn"></tbody>
+      </table>
+
+      <strong style="display:block;margin-top:18px;margin-bottom:8px">Все школы: даты и разрывы</strong>
       <div class="tbl-wrap">
         <table class="full">
           <thead><tr>
@@ -651,27 +696,8 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
           <tbody id="ktTbl"></tbody>
         </table>
       </div>
-    </div>
-  </details>
 
-  <details id="secContractors">
-    <summary>По подрядчикам</summary>
-    <div class="detail-body">
-      <p class="note" style="margin-top:14px">Сгруппировали школы по подрядчику — видно, повторяются ли проблемы у одного и того же исполнителя на разных объектах, или это разовые случаи.</p>
-      <div class="tbl-wrap">
-        <table class="full">
-          <thead><tr>
-            <th>Подрядчик</th><th class="r">Объектов</th><th class="r">Не осваивают бюджет 2026</th><th>Объекты</th>
-          </tr></thead>
-          <tbody id="contractorsTbl"></tbody>
-        </table>
-      </div>
-    </div>
-  </details>
-
-  <details id="secTable">
-    <summary>Краткая таблица</summary>
-    <div class="detail-body">
+      <strong style="display:block;margin-top:18px;margin-bottom:8px">Краткая таблица</strong>
       <div class="tbl-wrap">
         <table class="full">
           <thead><tr>
@@ -681,19 +707,15 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
           <tbody id="tbl"></tbody>
         </table>
       </div>
-    </div>
-  </details>
 
-  <details id="secContext">
-    <summary>Если коротко</summary>
-    <div class="detail-body">
-      <ul class="brief" style="margin-top:14px">
+      <strong style="display:block;margin-top:18px;margin-bottom:8px">Если коротко</strong>
+      <ul class="brief">
         <li>Готовность и деньги считаются отдельно — высокая СГ при 30% выплат это нормально.</li>
         <li>Деньги идут после приёмки, не по цифре с мониторинга.</li>
         <li>«Стройка до экспертизы» — в КСГ экспертиза позже, а СМР уже идут.</li>
         <li>РС в этой выгрузке по школам не выделен.</li>
       </ul>
-      <p class="note">Данные: файлы СГ, платежи, Simple List, КСГ+Экспертиза.</p>
+      <p class="note">Данные: файлы СГ, платежи, Simple List, КСГ+Экспертиза, факт финансирования по соцобъектам (сверен по адресам через kr-obr).</p>
     </div>
   </details>
 </div>
@@ -725,7 +747,6 @@ document.getElementById('ktAttn').innerHTML = DATA.kt_attention.map(s =>
 document.getElementById('b1').textContent = DATA.stats.n_sg_behind_plan;
 document.getElementById('b2').textContent = DATA.stats.n_sg_ahead;
 document.getElementById('b3').textContent = DATA.stats.n_smr_before_exp;
-document.getElementById('b4').textContent = DATA.stats.n_no_budget2026;
 document.getElementById('k6').textContent = DATA.stats.n_no_budget2026;
 
 document.getElementById('budgetAlert').innerHTML = DATA.budget_alert.map(s =>
@@ -737,6 +758,15 @@ document.getElementById('contractorsTbl').innerHTML = DATA.contractors.map(c => 
   const allStuck = c.objects.length > 1 && c.n_no_budget2026 === c.objects.length;
   return `<tr${allStuck ? ' style="background:#fdecea"' : ''}><td>${c.contractor}</td><td class="r">${c.objects.length}</td><td class="r">${c.n_no_budget2026 || '—'}</td><td>${objs}</td></tr>`;
 }).join('');
+
+document.getElementById('redZoneTbl').innerHTML = DATA.red_zone.slice(0, 10).map(s =>
+  `<tr><td title="${s.full}">${s.name}</td><td class="r">${s.sg}%</td><td class="r">${s.gap}</td><td class="r">${s.stage_median}</td><td class="r">+${s.deviation}</td></tr>`
+).join('');
+
+document.getElementById('advOnlyN').textContent = DATA.advance_only.length;
+document.getElementById('advOnlyTbl').innerHTML = [...DATA.advance_only].sort((a,b)=>b.sg-a.sg).map(s =>
+  `<tr><td title="${s.full}">${s.name}</td><td class="r">${s.sg}%</td><td class="r">${s.advPct}%</td></tr>`
+).join('');
 
 document.getElementById('ktTbl').innerHTML = [...DATA.per].sort((a,b)=>(b.flags?.length||0)-(a.flags?.length||0)).map(p=>{
   const k = DATA.kt_dates[p.uin]||{};
@@ -831,6 +861,7 @@ function initMethod() {
 
 initStage();
 initMethod();
+initDetailCharts();
 document.getElementById('secCharts').addEventListener('toggle', e => { if(e.target.open) initDetailCharts(); });
 </script>
 </body>
