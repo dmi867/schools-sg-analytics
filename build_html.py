@@ -145,17 +145,39 @@ def load_ksg():
     return kt
 
 
+SIMPLE_LIST_FILE = "0709_Акцент_Simple List.xlsx"
+
+
 def load_simple_list():
-    wb = openpyxl.load_workbook(ROOT / "2408_Акцент_Simple List.xlsx", data_only=True)
+    wb = openpyxl.load_workbook(ROOT / SIMPLE_LIST_FILE, data_only=True)
     ws = wb.active
     headers = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
     col = {h: i for i, h in enumerate(headers)}
     sl = {}
+    years = {}
     for row in ws.iter_rows(min_row=2, values_only=True):
         uin = row[col["Код УИН"]]
         if not uin:
             continue
         yr = row[col["Год финансирования"]]
+
+        def num(name):
+            v = row[col[name]]
+            try:
+                return float(v) if v is not None else None
+            except (TypeError, ValueError):
+                return None
+
+        if yr and str(yr).isdigit() and int(yr) >= 2020:
+            years.setdefault(uin, []).append(
+                {
+                    "year": int(yr),
+                    "plan": num("Сумма планового финансирования") or 0,
+                    "obligated": num("Сумма бюджетных обязательств") or 0,
+                    "fact": num("Сумма фактического финансирования") or 0,
+                }
+            )
+
         if uin in sl and yr and str(yr).isdigit() and int(yr) <= int(sl[uin].get("yr") or 0):
             continue
         pay_pct = None
@@ -165,23 +187,56 @@ def load_simple_list():
                 pay_pct = round(float(str(v).replace(",", ".")), 1)
             except ValueError:
                 pass
-        contractor = row[col["Наименование подрядчика"]] or (sl.get(uin) or {}).get("contractor")
+        prev = sl.get(uin) or {}
+        contractor = row[col["Наименование подрядчика"]] or prev.get("contractor")
+        inn = row[col["ИНН подрядчика"]] or prev.get("inn")
+        rp = row[col["РП"]] or prev.get("rp")
+        entered_exp = bool(row[col["Код заявления на прохождение экспертизы"]]) or prev.get("entered_exp", False)
+
+        exp_overrun = prev.get("exp_overrun")
+        plan_c, agreed_c = num("Плановая стоимость объекта экспертизы"), num("Согласованная стоимость объекта экспертизы")
+        if plan_c and agreed_c and plan_c > 0:
+            exp_overrun = round((agreed_c - plan_c) / plan_c * 100, 1)
+
         sl[uin] = {
             "yr": yr,
             "name": row[col["Название объекта"]],
             "pay_pct": pay_pct,
             "contractor": contractor,
+            "inn": inn,
+            "rp": rp,
+            "entered_exp": entered_exp,
+            "exp_overrun": exp_overrun,
+            "exp_plan_entry": parse_date(row[col["Плановая дата захода на экспертизу из ДК"]]) or prev.get("exp_plan_entry"),
+            "opening_plan": parse_date(row[col["Планируемая дата открытия"]]) or prev.get("opening_plan"),
             "exp_in": parse_date(row[col["Дата подачи заявления (захода) на экспертизу"]]),
             "exp_start": parse_date(row[col["Дата начала экспертизы"]]),
             "exp_done": parse_date(row[col["Дата получения заключения (завершения ) экспертизы"]]),
             "ctr_plan": parse_date(row[col["Заключение контракта начало план КСГ"]]),
             "ctr_fact": parse_date(row[col["Заключение контракта начало факт КСГ"]]),
         }
+
+    for uin, rows in years.items():
+        by_year = {}
+        for r in rows:
+            e = by_year.setdefault(r["year"], {"year": r["year"], "plan": 0, "obligated": 0, "fact": 0})
+            e["plan"] += r["plan"]
+            e["obligated"] += r["obligated"]
+            e["fact"] += r["fact"]
+        if uin in sl:
+            sl[uin]["program_years"] = sorted(by_year.values(), key=lambda x: x["year"])
     return sl
 
 
 def load_finance2026():
     path = ROOT / "finance2026.json"
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def load_addresses():
+    path = ROOT / "addresses.json"
     if not path.exists():
         return {}
     return json.loads(path.read_text(encoding="utf-8"))
@@ -215,6 +270,7 @@ def load_data():
     sl = load_simple_list()
     ksg = load_ksg()
     fin2026 = load_finance2026()
+    addresses = load_addresses()
 
     cross, per, traj, kt_rows, kt_dates = [], [], {}, [], {}
     budget_alert = []
@@ -339,6 +395,15 @@ def load_data():
         }
 
         contractor = short_contractor(info.get("contractor"))
+        addr = addresses.get(uin, {})
+        opening_plan = info.get("opening_plan")
+        days_to_open = (opening_plan - datetime.now()).days if opening_plan else None
+
+        program_years = info.get("program_years", [])
+        program_unbacked = round(
+            sum(y["plan"] for y in program_years if y["year"] <= 2026 and y["obligated"] == 0 and y["fact"] == 0) / 1e6,
+            1,
+        )
 
         kt_rows.append(
             {
@@ -353,6 +418,16 @@ def load_data():
                 "flags": flags,
                 "flag_n": len(flags),
                 "contractor": contractor,
+                "inn": info.get("inn"),
+                "rp": info.get("rp"),
+                "address": addr.get("address"),
+                "municipality": addr.get("municipality"),
+                "exp_overrun": info.get("exp_overrun"),
+                "entered_exp": info.get("entered_exp", False),
+                "opening_plan": fmt_date(opening_plan),
+                "days_to_open": days_to_open,
+                "program_years": program_years,
+                "program_unbacked": program_unbacked,
             }
         )
 
@@ -509,6 +584,7 @@ def load_data():
         "red_zone": red_zone,
         "advance_only": advance_only,
         "kt_attention": kt_sorted[:10],
+        "objects": kt_rows,
         "reg": {"a": round(a, 1), "b": round(b, 4)},
         "cross": cross,
         "per": sorted(per, key=lambda x: -(x["r"] if x["r"] is not None else -1)),
@@ -523,50 +599,65 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>СГ и выплаты — 47 школ</title>
+<title>СГ и выплаты — 48 школ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
 <style>
-  :root { --bg:#f4f3ef; --surface:#fff; --text:#1c1c1c; --muted:#555; --faint:#888;
-    --line:#ddd9d0; --accent:#1a4d7a; --green:#2d6a4f;
-    --warn-bg:#faf3e6; --warn-border:#c4922a; --info-bg:#edf3f9; --ok-bg:#eaf4ee; }
+  :root {
+    --bg:#EEF3F8; --surface:#fff; --div:#EDF2F7; --line:#DCE6F0;
+    --text:#0D2040; --muted:#5A7189; --faint:#93A8BC;
+    --accent:#1B8A9C; --accent-l:#22B0C8; --accent-d:#126880; --accent-dim:rgba(27,138,156,.09);
+    --ok:#27AE60; --warn:#E8A020; --err:#D94040; --info:#2E7CC4;
+    --ok-bg:#E8F6EE; --warn-bg:#FDF3E2; --err-bg:#FBE9E9; --info-bg:#E9F1FB;
+  }
   * { box-sizing:border-box }
-  body { margin:0; font:15px/1.5 "Segoe UI",system-ui,sans-serif; background:var(--bg); color:var(--text) }
-  .wrap { max-width:880px; margin:0 auto; padding:24px 18px 56px }
-  h1 { font-size:1.5rem; font-weight:650; margin:0 0 4px }
+  body { margin:0; font:15px/1.55 'Golos Text',Inter,system-ui,sans-serif; background:var(--bg); color:var(--text); letter-spacing:-.01em }
+  .wrap { max-width:920px; margin:0 auto; padding:28px 18px 56px }
+  h1 { font-size:1.65rem; font-weight:700; margin:0 0 4px; letter-spacing:-.02em;
+    background:linear-gradient(135deg, hsl(200,60%,23%), hsl(188,70%,30%));
+    -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; display:inline-block }
   .sub { color:var(--muted); margin:0 0 20px; font-size:.92rem }
   ul.brief { margin:0; padding-left:1.2rem; color:var(--muted) }
   ul.brief li { margin:6px 0 }
   .kpis { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin:16px 0 }
-  .kpi { background:var(--surface); border:1px solid var(--line); border-radius:6px; padding:12px 14px }
-  .kpi .n { font-size:1.35rem; font-weight:700; color:var(--accent); line-height:1.2 }
+  .kpi { background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:12px 14px; box-shadow:0 1px 2px rgba(13,32,64,.04) }
+  .kpi .n { font-size:1.35rem; font-weight:700; color:var(--accent-d); line-height:1.2; font-variant-numeric:tabular-nums }
   .kpi .l { font-size:.75rem; color:var(--muted); margin-top:4px }
   .chart { position:relative; height:280px; margin-top:10px }
   .chart.tall { height:340px }
   .note { font-size:.82rem; color:var(--faint); margin:6px 0 0 }
-  .box { background:var(--surface); border:1px solid var(--line); border-radius:6px; padding:14px 16px; margin:12px 0 }
+  .box { background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:16px 18px; margin:12px 0; box-shadow:0 1px 3px rgba(13,32,64,.05) }
+  .box.stub { background:repeating-linear-gradient(135deg, var(--surface) 0 10px, #F7FAFC 10px 20px); border-style:dashed }
   .mini table { width:100%; font-size:.84rem; border-collapse:collapse }
-  .mini th,.mini td { padding:6px 8px; border-bottom:1px solid var(--line); text-align:left }
-  .mini th { color:var(--muted); font-weight:600 }
+  .mini th,.mini td { padding:7px 8px; border-bottom:1px solid var(--div); text-align:left }
+  .mini th { color:var(--faint); font-weight:600; font-size:.72rem; letter-spacing:.04em; text-transform:uppercase; background:#F7FAFC }
   .mini td.r,.mini th.r { text-align:right; font-variant-numeric:tabular-nums }
-  details { background:var(--surface); border:1px solid var(--line); border-radius:6px; margin:10px 0; overflow:hidden }
-  details > summary { cursor:pointer; padding:14px 16px; font-weight:600; list-style:none; user-select:none }
+  details { background:var(--surface); border:1px solid var(--line); border-radius:12px; margin:10px 0; overflow:hidden; box-shadow:0 1px 3px rgba(13,32,64,.05) }
+  details > summary { cursor:pointer; padding:14px 18px; font-weight:600; list-style:none; user-select:none }
   details > summary::-webkit-details-marker { display:none }
   details > summary::after { content:'+'; float:right; color:var(--faint); font-weight:400 }
   details[open] > summary::after { content:'−' }
-  details > summary:hover { background:#faf9f6 }
-  .detail-body { padding:0 16px 16px; border-top:1px solid var(--line) }
-  select { font:inherit; padding:6px 10px; border:1px solid var(--line); border-radius:4px; background:#fff; max-width:100% }
+  details > summary:hover { background:#F7FAFC }
+  .detail-body { padding:0 18px 18px; border-top:1px solid var(--div) }
+  select { font:inherit; padding:6px 10px; border:1px solid var(--line); border-radius:8px; background:#fff; max-width:100% }
   .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:10px 0 }
-  .tag { font-size:.75rem; padding:3px 9px; background:var(--info-bg); border:1px solid var(--line); border-radius:99px; color:var(--accent) }
+  .tag { font-size:.75rem; padding:3px 9px; background:var(--accent-dim); border:1px solid var(--line); border-radius:99px; color:var(--accent-d); font-weight:500 }
   table.full { width:100%; border-collapse:collapse; font-size:.84rem }
-  table.full th,table.full td { padding:7px 9px; border-bottom:1px solid var(--line) }
-  table.full th { background:#eeebe4; position:sticky; top:0; text-align:left }
+  table.full th,table.full td { padding:8px 9px; border-bottom:1px solid var(--div) }
+  table.full th { background:#F7FAFC; position:sticky; top:0; text-align:left; color:var(--faint); font-weight:600; font-size:.72rem; letter-spacing:.04em; text-transform:uppercase }
   table.full td.r,table.full th.r { text-align:right; font-variant-numeric:tabular-nums }
-  .tbl-wrap { max-height:420px; overflow:auto; border:1px solid var(--line); border-radius:4px; margin-top:10px }
-  .flag { font-size:.72rem; padding:2px 7px; margin:1px 2px 1px 0; display:inline-block; background:#faf3e6; border:1px solid #e0c88a; border-radius:4px; color:#7a5a12 }
-  .flag.warn { background:#fdecea; border-color:#e8a8a0; color:#8a2a22 }
+  .tbl-wrap { max-height:420px; overflow:auto; border:1px solid var(--line); border-radius:10px; margin-top:10px }
+  .flag { font-size:.72rem; padding:2px 7px; margin:1px 2px 1px 0; display:inline-block; background:var(--warn-bg); border:1px solid #EFCB84; border-radius:5px; color:#8A5E10 }
+  .flag.warn { background:var(--err-bg); border-color:#F0B3B3; color:#A32E2E }
+  .pill { display:inline-block; font-size:.72rem; font-weight:600; padding:2px 9px; border-radius:99px }
+  .pill.ok { background:var(--ok-bg); color:#1E8449 }
+  .pill.warn { background:var(--warn-bg); color:#8A5E10 }
+  .pill.err { background:var(--err-bg); color:#A32E2E }
+  .stub-label { display:inline-block; font-size:.7rem; font-weight:600; letter-spacing:.03em; text-transform:uppercase; color:var(--faint); background:#F7FAFC; border:1px solid var(--line); border-radius:5px; padding:2px 8px }
   .kpis.four { grid-template-columns:repeat(4,1fr) }
   @media(max-width:900px) { .kpis.four { grid-template-columns:repeat(2,1fr) } }
   @media(max-width:700px) { .kpis,.kpis.four { grid-template-columns:1fr } }
@@ -575,7 +666,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 <body>
 <div class="wrap">
   <h1>СГ и выплаты</h1>
-  <p class="sub">48 школ, август 2026 — методика управления финансированием портфеля</p>
+  <p class="sub">48 школ, обновлено 07.09.2026 — методика управления финансированием портфеля</p>
 
   <div class="box" id="methodBox">
     <p class="note" style="margin:0 0 10px">Портфель — 48 капремонтов школ. Ниже — риск по деньгам, а не по проценту готовности: пять правил и решения, которые из них следуют. У каждого правила — цифры конкретно по этому портфелю, без общих слов.</p>
@@ -596,8 +687,8 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
     <strong style="display:block;margin-top:20px;font-size:1.05rem">3. Нулевое освоение решается на этой неделе, не в декабре</strong>
     <p class="note"><span id="mth0"></span> школ — 0% кассового исполнения бюджета 2026 года при уже утверждённом финансировании (89–418 млн ₽ на объект). Ждать конца года бессмысленно: либо деньги начинают двигаться в ближайший месяц, либо бюджет надо честно переносить на 2027-й — и это решение нужно принять сейчас.</p>
-    <div class="box" style="background:#fdecea;border-color:#e8a8a0;margin:8px 0 0">
-      <strong style="display:block;margin-bottom:6px;color:#8a2a22">⚠ <span id="k6"></span> школ: бюджет утверждён, выплат в 2026 году не было</strong>
+    <div class="box" style="background:var(--err-bg);border-color:#F0B3B3;margin:8px 0 0">
+      <strong style="display:block;margin-bottom:6px;color:#A32E2E">⚠ <span id="k6"></span> школ: бюджет утверждён, выплат в 2026 году не было</strong>
       <p class="note" style="margin:0 0 8px">Строительство почти завершено (готовность 80–100%), кассовых выплат за год — 0%.</p>
       <table>
         <thead><tr><th>Школа</th><th class="r">СГ</th><th class="r">План 2026, млн ₽</th></tr></thead>
@@ -623,6 +714,25 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         </tr></thead>
         <tbody id="contractorsTbl"></tbody>
       </table>
+    </div>
+
+    <strong style="display:block;margin-top:20px;font-size:1.05rem">6. Лимит по госпрограмме — не то же самое, что деньги под контрактом</strong>
+    <p class="note"><span id="unbackedN"></span> школ показывают лимит финансирования на 2025–2026 год, под который до сих пор не оформлены бюджетные обязательства (и, соответственно, нет исполнения) — это отдельный вид риска, почти не пересекающийся со списком нулевого освоения выше: деньги формально запланированы в госпрограмме, но не привязаны ни к контракту, ни к платежу.</p>
+    <div class="tbl-wrap" style="max-height:220px">
+      <table class="full">
+        <thead><tr><th>Школа</th><th class="r">СГ</th><th class="r">Лимит без обязательств, млн ₽</th></tr></thead>
+        <tbody id="unbackedTbl"></tbody>
+      </table>
+    </div>
+
+    <strong style="display:block;margin-top:20px;font-size:1.05rem">Данных не хватает — заглушки вместо разделов</strong>
+    <div class="box stub">
+      <span class="stub-label">Данных нет</span>
+      <p class="note" style="margin-top:8px">Ответственный по каждой контрольной точке (кто именно ведёт экспертизу, кто СМР, кто ввод) — в источниках есть только один общий РП на объект, разбивки по этапам нет.</p>
+    </div>
+    <div class="box stub">
+      <span class="stub-label">Данных нет</span>
+      <p class="note" style="margin-top:8px">Условия контрактов — ставки пеней, размер банковских гарантий, пороги расторжения. Без этого раздел про рычаги на подрядчика (принцип 5) остаётся на уровне общих принципов, а не конкретных цифр давления по каждому договору.</p>
     </div>
 
     <strong style="display:block;margin-top:24px;font-size:1.1rem">Выводы и что делать</strong>
@@ -687,6 +797,16 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         <div class="kpi"><div class="n" id="k5"></div><div class="l">стройка до экспертизы</div></div>
       </div>
 
+      <strong style="display:block;margin-top:16px;margin-bottom:8px">Объекты: округ, подрядчик, ответственный, срок ввода</strong>
+      <div class="tbl-wrap">
+        <table class="full">
+          <thead><tr>
+            <th>Школа</th><th>Округ</th><th>Подрядчик</th><th>РП</th><th>План ввода</th><th>Срок</th><th class="r">Экспертиза, удорожание</th>
+          </tr></thead>
+          <tbody id="objTbl"></tbody>
+        </table>
+      </div>
+
       <strong style="display:block;margin-top:16px;margin-bottom:8px">Кого смотреть первым (по всем замечаниям, не только по деньгам)</strong>
       <table class="mini">
         <thead><tr><th>Школа</th><th class="r">СГ</th><th class="r">План</th><th class="r">Выпл.</th><th>Что не так</th></tr></thead>
@@ -729,7 +849,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 </div>
 <script>
 const DATA = __DATA__;
-const blue='#1a4d7a', blueL='rgba(26,77,122,.35)', green='#2d6a4f';
+const blue='#126880', blueL='rgba(18,104,128,.35)', green='#27AE60';
 const charts = { scatter:false, traj:false };
 
 function flagsHtml(arr) {
@@ -764,7 +884,7 @@ document.getElementById('budgetAlert').innerHTML = DATA.budget_alert.map(s =>
 document.getElementById('contractorsTbl').innerHTML = DATA.contractors.map(c => {
   const objs = c.objects.map(o => o.name + (o.no_budget2026 ? ' *' : '')).join(', ');
   const allStuck = c.objects.length > 1 && c.n_no_budget2026 === c.objects.length;
-  return `<tr${allStuck ? ' style="background:#fdecea"' : ''}><td>${c.contractor}</td><td class="r">${c.objects.length}</td><td class="r">${c.n_no_budget2026 || '—'}</td><td>${objs}</td></tr>`;
+  return `<tr${allStuck ? ' style="background:var(--err-bg)"' : ''}><td>${c.contractor}</td><td class="r">${c.objects.length}</td><td class="r">${c.n_no_budget2026 || '—'}</td><td>${objs}</td></tr>`;
 }).join('');
 
 document.getElementById('redZoneTbl').innerHTML = DATA.red_zone.filter(s=>s.deviation>15).map(s =>
@@ -775,6 +895,19 @@ document.getElementById('advOnlyN').textContent = DATA.advance_only.length;
 document.getElementById('advOnlyTbl').innerHTML = [...DATA.advance_only].sort((a,b)=>b.sg-a.sg).map(s =>
   `<tr><td title="${s.full}">${s.name}</td><td class="r">${s.sg}%</td><td class="r">${s.advPct}%</td></tr>`
 ).join('');
+
+const unbacked = DATA.objects.filter(o=>o.program_unbacked>0).sort((a,b)=>b.program_unbacked-a.program_unbacked);
+document.getElementById('unbackedN').textContent = unbacked.length;
+document.getElementById('unbackedTbl').innerHTML = unbacked.map(o =>
+  `<tr><td title="${o.full}">${o.name}</td><td class="r">${o.sg}%</td><td class="r">${o.program_unbacked}</td></tr>`
+).join('');
+
+document.getElementById('objTbl').innerHTML = DATA.objects.map(o => {
+  const days = o.days_to_open;
+  const overdue = days!=null ? (days<0 ? `<span class="pill err">просрочка ${Math.abs(days)} дн.</span>` : `<span class="pill ok">осталось ${days} дн.</span>`) : '—';
+  const overrun = o.exp_overrun!=null ? (o.exp_overrun>5 ? `<span class="pill warn">+${o.exp_overrun}%</span>` : o.exp_overrun+'%') : '—';
+  return `<tr><td title="${o.full}">${o.name}</td><td>${o.municipality||'—'}</td><td>${o.contractor||'—'}</td><td>${o.rp||'—'}</td><td>${o.opening_plan||'—'}</td><td>${overdue}</td><td class="r">${overrun}</td></tr>`;
+}).join('');
 
 document.getElementById('ktTbl').innerHTML = [...DATA.per].sort((a,b)=>(b.flags?.length||0)-(a.flags?.length||0)).map(p=>{
   const k = DATA.kt_dates[p.uin]||{};
@@ -825,8 +958,8 @@ function initDetailCharts() {
   new Chart(document.getElementById('cScatter'), {
     type:'scatter',
     data:{ datasets:[
-      { label:'Свой процент', data:pts.filter(s=>!s.advance).map(mk2), backgroundColor:'rgba(26,77,122,.75)', pointRadius:4 },
-      { label:'Аванс (30% или 49%)', data:pts.filter(s=>s.advance).map(mk2), backgroundColor:'rgba(140,140,140,.6)', pointRadius:4 },
+      { label:'Свой процент', data:pts.filter(s=>!s.advance).map(mk2), backgroundColor:'rgba(18,104,128,.75)', pointRadius:4 },
+      { label:'Аванс (30% или 49%)', data:pts.filter(s=>s.advance).map(mk2), backgroundColor:'rgba(147,168,188,.55)', pointRadius:4 },
       { label:'Тренд по всем школам', data:line, type:'line', borderColor:blue, borderDash:[5,4], pointRadius:0 }
     ]},
     options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}, datalabels:{display:false},
