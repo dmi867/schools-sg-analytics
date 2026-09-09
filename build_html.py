@@ -163,9 +163,13 @@ def load_simple_list():
 
         def num(name):
             v = row[col[name]]
+            if v is None:
+                return None
+            if isinstance(v, (int, float)):
+                return float(v)
             try:
-                return float(v) if v is not None else None
-            except (TypeError, ValueError):
+                return float(str(v).replace("\xa0", "").replace(" ", "").replace(",", "."))
+            except ValueError:
                 return None
 
         if yr and str(yr).isdigit() and int(yr) >= 2020:
@@ -198,6 +202,12 @@ def load_simple_list():
         if plan_c and agreed_c and plan_c > 0:
             exp_overrun = round((agreed_c - plan_c) / plan_c * 100, 1)
 
+        contract_value = (
+            num("Начальная максимальная цена контракта")
+            or num("Предельная стоимость по объекту, тыc.руб.")
+            or prev.get("contract_value")
+        )
+
         sl[uin] = {
             "yr": yr,
             "name": row[col["Название объекта"]],
@@ -205,6 +215,7 @@ def load_simple_list():
             "contractor": contractor,
             "inn": inn,
             "rp": rp,
+            "contract_value": contract_value,
             "entered_exp": entered_exp,
             "exp_overrun": exp_overrun,
             "exp_plan_entry": parse_date(row[col["Плановая дата захода на экспертизу из ДК"]]) or prev.get("exp_plan_entry"),
@@ -405,6 +416,18 @@ def load_data():
             1,
         )
 
+        contract_value = info.get("contract_value")
+        gap_pct = round(pay_pct - last["fact"], 1) if pay_pct is not None else None
+        gap_rub = round(gap_pct / 100 * contract_value / 1e6, 1) if gap_pct is not None and contract_value else None
+        if gap_pct is None:
+            money_status = "unknown"
+        elif gap_pct > 10:
+            money_status = "over"
+        elif gap_pct < -10:
+            money_status = "credit"
+        else:
+            money_status = "balanced"
+
         kt_rows.append(
             {
                 "uin": uin,
@@ -428,6 +451,10 @@ def load_data():
                 "days_to_open": days_to_open,
                 "program_years": program_years,
                 "program_unbacked": program_unbacked,
+                "contract_value": round(contract_value / 1e6, 1) if contract_value else None,
+                "gap_pct": gap_pct,
+                "gap_rub": gap_rub,
+                "money_status": money_status,
             }
         )
 
@@ -616,7 +643,7 @@ HEAD_STYLE = r"""<!DOCTYPE html>
   }
   * { box-sizing:border-box }
   body { margin:0; font:15px/1.55 'Golos Text',Inter,system-ui,sans-serif; background:var(--bg); color:var(--text); letter-spacing:-.01em }
-  .wrap { max-width:920px; margin:0 auto; padding:28px 18px 56px }
+  .wrap { max-width:__WRAP__px; margin:0 auto; padding:28px 18px 56px }
   h1 { font-size:1.65rem; font-weight:700; margin:0 0 4px; letter-spacing:-.02em;
     background:linear-gradient(135deg, hsl(200,60%,23%), hsl(188,70%,30%));
     -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; display:inline-block }
@@ -663,6 +690,17 @@ HEAD_STYLE = r"""<!DOCTYPE html>
   @media(max-width:700px) { .kpis,.kpis.four { grid-template-columns:1fr } }
   .navlink { display:inline-block; margin:0 0 16px; font-size:.85rem; color:var(--accent-d); text-decoration:none; font-weight:600 }
   .navlink:hover { text-decoration:underline }
+  .filterbar { display:flex; gap:8px; flex-wrap:wrap; margin:12px 0 18px }
+  .fbtn { font:inherit; font-size:.82rem; font-weight:600; padding:7px 14px; border-radius:99px; border:1px solid var(--line); background:var(--surface); color:var(--muted); cursor:pointer }
+  .fbtn:hover { border-color:var(--accent) }
+  .fbtn.active { background:var(--accent); border-color:var(--accent); color:#fff }
+  .money { font-variant-numeric:tabular-nums; font-weight:600 }
+  .money.neg { color:#A32E2E }
+  .money.pos { color:#1E8449 }
+  tr.clickable { cursor:pointer }
+  tr.clickable:hover { background:var(--accent-dim) }
+  tr.row-active { background:var(--accent-dim) }
+  .card-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:10px; margin:14px 0 }
 </style>
 </head>
 <body>
@@ -761,168 +799,129 @@ METHOD_BODY = r"""
 """
 
 DASHBOARD_BODY = r"""
-  <details id="secCharts" open>
-    <summary>Графики: готовность и выплаты по портфелю</summary>
-    <div class="detail-body">
-      <strong style="display:block;margin-top:14px">Готовность и выплаты между школами</strong>
-      <div class="chart"><canvas id="cScatter"></canvas></div>
-      <p class="note">Точка — школа (наведите курсор, чтобы узнать название). Серые — типовой аванс (30% или 49%), не индивидуально посчитанный факт оплаты. Пунктир — общий тренд по всем точкам: он почти горизонтальный, роста почти нет.</p>
-      <p class="note">Даже если убрать авансы и оставить только <span id="mF"></span> школ с индивидуальным процентом, связь всё равно не появляется: r=<span id="mG"></span>, p≈<span id="mH"></span>. А вот <strong>внутри одной школы</strong> во времени готовность и выплаты растут почти синхронно — медианная корреляция <span id="mC"></span> по <span id="mD"></span> школам (см. «Одна школа» ниже). Разница простая: «сколько уже закрыто актами по этой стройке» — не то же самое, что «у кого выше готовность по сравнению с другими школами».</p>
-      <details style="margin-top:6px">
-        <summary style="cursor:pointer;font-size:.84rem;color:var(--accent)">Что значат r и p?</summary>
-        <ul class="brief" style="margin-top:8px">
-          <li><strong>r</strong> — насколько сильно две величины растут вместе, от −1 до +1. 0 — совсем никакой связи, точки разбросаны как попало. +1 — идеальная связь: одно растёт, второе растёт ровно так же. −1 — идеальная обратная связь.</li>
-          <li><strong>p</strong> — какова вероятность увидеть такое же r случайно, если на самом деле никакой связи нет вообще. Маленький p (меньше 0.05, то есть 5%) — связь, скорее всего, настоящая. Большой p — это вполне может быть просто совпадение на нашей выборке школ.</li>
-        </ul>
-      </details>
-      <strong style="display:block;margin-top:18px">Одна школа</strong>
-      <p class="note">Звёздочка (*) в списке — у школы есть хотя бы одно замечание (см. раздел «Все школы: даты и разрывы» ниже).</p>
-      <div class="row">
-        <select id="selSchool"></select>
-        <span class="tag" id="tagR"></span>
-        <span class="note" id="metaSchool" style="margin:0"></span>
-      </div>
-      <div class="chart"><canvas id="cTraj"></canvas></div>
-      <p class="note" id="ktLine"></p>
-      <p class="note">Синяя — факт, пунктир — план, зелёная — % от суммы контракта, уже выплаченной на эту дату.</p>
-    </div>
-  </details>
+  <p class="note" style="margin:0 0 14px">По каждому объекту: сколько денег получил подрядчик против того, сколько физически построил — в рублях по цене контракта, не в очках готовности. Если оплата обгоняет стройку — избыток (куда делись деньги, непонятно). Если стройка обгоняет оплату — подрядчик кредитует стройку сам, ему должны заплатить.</p>
 
-  <details id="secOther">
-    <summary>Всё остальное: показатели, полные таблицы, контекст</summary>
-    <div class="detail-body">
-      <ul class="brief" style="margin-top:14px">
-        <li>У <span id="b1"></span> школ готовность ниже плана больше чем на 5 п.п.</li>
-        <li>У <span id="b2"></span> школ разрыв «готовность минус выплаты» больше 55 п.п. по фиксированному порогу (для отклонения от типичного по этапу — см. «красную зону» в методике выше).</li>
-        <li>У <span id="b3"></span> школ стройка началась раньше, чем в КСГ стоит экспертиза.</li>
-        <li>Про РС: в КСГ по школам такой точки нет, смотрим контракт и экспертизу.</li>
-      </ul>
-      <div class="kpis four">
-        <div class="kpi"><div class="n" id="k1"></div><div class="l">готовность выше выплат</div></div>
-        <div class="kpi"><div class="n" id="k2"></div><div class="l">обычный разрыв, п.п.</div></div>
-        <div class="kpi"><div class="n" id="k4"></div><div class="l">факт ниже плана</div></div>
-        <div class="kpi"><div class="n" id="k5"></div><div class="l">стройка до экспертизы</div></div>
-      </div>
+  <div class="kpis four">
+    <div class="kpi"><div class="n" id="dK1"></div><div class="l">объектов в портфеле</div></div>
+    <div class="kpi"><div class="n" id="dK2"></div><div class="l">суммарный контракт, млрд ₽</div></div>
+    <div class="kpi"><div class="n" id="dK3"></div><div class="l">подрядчики кредитуют, млрд ₽</div></div>
+    <div class="kpi"><div class="n" id="dK4"></div><div class="l">0% освоения бюджета 2026</div></div>
+  </div>
 
-      <strong style="display:block;margin-top:16px;margin-bottom:8px">Объекты: округ, подрядчик, ответственный, срок ввода</strong>
-      <div class="tbl-wrap">
-        <table class="full">
-          <thead><tr>
-            <th>Школа</th><th>Округ</th><th>Подрядчик</th><th>РП</th><th>План ввода</th><th>Срок</th><th class="r">Экспертиза, удорожание</th>
-          </tr></thead>
-          <tbody id="objTbl"></tbody>
-        </table>
-      </div>
+  <div class="filterbar" id="filterBar">
+    <button class="fbtn active" data-f="all">Все объекты</button>
+    <button class="fbtn" data-f="credit">Подрядчик кредитует &gt;100 млн ₽</button>
+    <button class="fbtn" data-f="balanced">Баланс</button>
+    <button class="fbtn" data-f="nobudget">0% освоения 2026</button>
+  </div>
 
-      <strong style="display:block;margin-top:16px;margin-bottom:8px">Подрядчики</strong>
-      <div class="tbl-wrap">
-        <table class="full">
-          <thead><tr>
-            <th>Подрядчик</th><th class="r">Объектов</th><th class="r">Не осваивают бюджет 2026</th><th>Объекты</th>
-          </tr></thead>
-          <tbody id="contractorsTbl"></tbody>
-        </table>
-      </div>
+  <div class="tbl-wrap" style="max-height:520px">
+    <table class="full">
+      <thead><tr>
+        <th>Школа</th><th>Округ</th><th>Подрядчик</th><th class="r">Контракт, млн ₽</th>
+        <th class="r">СГ</th><th class="r">Оплата</th><th class="r">Разница, млн ₽</th><th>Статус</th><th>Ввод</th>
+      </tr></thead>
+      <tbody id="objTbl"></tbody>
+    </table>
+  </div>
+  <p class="note">Клик по строке — график этого объекта ниже. Разница = оплата% минус СГ% × сумма контракта.</p>
 
-      <strong style="display:block;margin-top:16px;margin-bottom:8px">Кого смотреть первым (по всем замечаниям, не только по деньгам)</strong>
-      <table class="mini">
-        <thead><tr><th>Школа</th><th class="r">СГ</th><th class="r">План</th><th class="r">Выпл.</th><th>Что не так</th></tr></thead>
-        <tbody id="ktAttn"></tbody>
-      </table>
+  <strong style="display:block;margin-top:22px;margin-bottom:8px">Подрядчики — сводно по портфелю</strong>
+  <p class="note" style="margin-top:0">Клик по подрядчику — отфильтровать таблицу выше только по его объектам.</p>
+  <div class="tbl-wrap">
+    <table class="full">
+      <thead><tr>
+        <th>Подрядчик</th><th class="r">Объектов</th><th class="r">Контракт, млн ₽</th>
+        <th class="r">Подрядчик кредитует, млн ₽</th><th class="r">Не осваивают бюджет 2026</th>
+      </tr></thead>
+      <tbody id="contrRollup"></tbody>
+    </table>
+  </div>
 
-      <strong style="display:block;margin-top:18px;margin-bottom:8px">Все школы: даты и разрывы</strong>
-      <div class="tbl-wrap">
-        <table class="full">
-          <thead><tr>
-            <th>Школа</th><th class="r">Факт</th><th class="r">План</th><th class="r">Δ</th>
-            <th class="r">Выпл.</th><th class="r">Δ</th>
-            <th>Экспертиза</th><th>Старт СМР</th><th>Контракт</th><th>Замечания</th>
-          </tr></thead>
-          <tbody id="ktTbl"></tbody>
-        </table>
-      </div>
-
-      <strong style="display:block;margin-top:18px;margin-bottom:8px">Краткая таблица</strong>
-      <div class="tbl-wrap">
-        <table class="full">
-          <thead><tr>
-            <th>Школа</th><th class="r">СГ</th><th class="r">План</th><th class="r">Выпл.</th>
-            <th class="r">Разрыв</th><th class="r">Сходятся</th>
-          </tr></thead>
-          <tbody id="tbl"></tbody>
-        </table>
-      </div>
-
-      <strong style="display:block;margin-top:18px;margin-bottom:8px">Если коротко</strong>
-      <ul class="brief">
-        <li>Готовность и деньги считаются отдельно — высокая СГ при 30% выплат это нормально.</li>
-        <li>Деньги идут после приёмки, не по цифре с мониторинга.</li>
-        <li>«Стройка до экспертизы» — в КСГ экспертиза позже, а СМР уже идут.</li>
-        <li>РС в этой выгрузке по школам не выделен.</li>
-      </ul>
-      <p class="note">Данные: файлы СГ, платежи, Simple List, КСГ+Экспертиза, факт финансирования по соцобъектам (сверен по адресам через kr-obr).</p>
-    </div>
-  </details>
+  <strong style="display:block;margin-top:22px;margin-bottom:8px">Один объект</strong>
+  <div class="row">
+    <select id="selSchool"></select>
+    <span class="tag" id="tagR"></span>
+    <span class="note" id="metaSchool" style="margin:0"></span>
+  </div>
+  <div class="chart"><canvas id="cTraj"></canvas></div>
+  <p class="note" id="ktLine"></p>
+  <p class="note">Синяя — факт, пунктир — план, зелёная — % от суммы контракта, уже выплаченной на эту дату.</p>
 """
 
 DASHBOARD_SCRIPT = r"""</div>
 <script>
 const DATA = __DATA__;
 const blue='#126880', blueL='rgba(18,104,128,.35)', green='#27AE60';
-const charts = { scatter:false, traj:false };
 
-function flagsHtml(arr) {
-  if(!arr||!arr.length) return '—';
-  return arr.map(f=>'<span class="flag'+(f.includes('стройка')||f.includes('эксперт')||f.includes('бюджет')?' warn':'')+'">'+f+'</span>').join('');
+const STATUS_LABEL = { over:'Избыток оплаты', credit:'Кредитует подрядчик', balanced:'Баланс', unknown:'Нет данных' };
+const STATUS_PILL = { over:'err', credit:'warn', balanced:'ok', unknown:'' };
+function moneyCell(v) {
+  if (v==null) return '—';
+  const cls = v>0 ? 'pos' : (v<0 ? 'neg' : '');
+  return `<span class="money ${cls}">${v>0?'+':''}${v.toLocaleString('ru-RU')}</span>`;
 }
 
-document.getElementById('k1').textContent = DATA.stats.n_sg_ahead + ' из ' + DATA.stats.n;
-document.getElementById('k2').textContent = '+' + DATA.stats.median_gap;
-document.getElementById('k4').textContent = DATA.stats.n_sg_behind_plan;
-document.getElementById('k5').textContent = DATA.stats.n_smr_before_exp;
+document.getElementById('dK1').textContent = DATA.objects.length;
+document.getElementById('dK2').textContent = (DATA.objects.reduce((s,o)=>s+(o.contract_value||0),0)/1000).toFixed(1);
+document.getElementById('dK3').textContent = (-DATA.objects.filter(o=>o.money_status==='credit').reduce((s,o)=>s+(o.gap_rub||0),0)/1000).toFixed(1);
+document.getElementById('dK4').textContent = DATA.objects.filter(o=>o.flags && o.flags.includes('не осваивает бюджет 2026')).length;
 
-document.getElementById('mC').textContent = DATA.stats.median_r.toFixed(2);
-document.getElementById('mD').textContent = DATA.stats.n_varying;
-document.getElementById('mF').textContent = DATA.stats.n_no_advance;
-document.getElementById('mG').textContent = DATA.stats.pearson_no_advance!=null ? DATA.stats.pearson_no_advance.toFixed(2) : '—';
-document.getElementById('mH').textContent = DATA.stats.pearson_no_advance_p!=null ? DATA.stats.pearson_no_advance_p.toFixed(2) : '—';
+let activeFilter = 'all', activeContractor = null;
 
-document.getElementById('ktAttn').innerHTML = DATA.kt_attention.map(s =>
-  `<tr><td title="${s.full}">${s.name}</td><td class="r">${s.sg}%</td><td class="r">${s.plan??'—'}%</td><td class="r">${s.pct??'—'}%</td><td>${flagsHtml(s.flags)}</td></tr>`
-).join('');
+function passesFilter(o) {
+  if (activeContractor && o.contractor !== activeContractor) return false;
+  if (activeFilter==='credit') return o.money_status==='credit' && Math.abs(o.gap_rub||0)>100;
+  if (activeFilter==='balanced') return o.money_status==='balanced';
+  if (activeFilter==='nobudget') return o.flags && o.flags.includes('не осваивает бюджет 2026');
+  return true;
+}
 
-document.getElementById('b1').textContent = DATA.stats.n_sg_behind_plan;
-document.getElementById('b2').textContent = DATA.stats.n_sg_ahead;
-document.getElementById('b3').textContent = DATA.stats.n_smr_before_exp;
+function renderObjTbl() {
+  const rows = DATA.objects.filter(passesFilter).sort((a,b)=>Math.abs(b.gap_rub||0)-Math.abs(a.gap_rub||0));
+  document.getElementById('objTbl').innerHTML = rows.map(o => {
+    const days = o.days_to_open;
+    const overdue = days!=null ? (days<0 ? `<span class="pill err">просрочка ${Math.abs(days)} дн.</span>` : `<span class="pill ok">осталось ${days} дн.</span>`) : '—';
+    return `<tr class="clickable" data-uin="${o.uin}"><td title="${o.full}">${o.name}</td><td>${o.municipality||'—'}</td><td>${o.contractor||'—'}</td>` +
+      `<td class="r">${o.contract_value??'—'}</td><td class="r">${o.sg}%</td><td class="r">${o.pct??'—'}%</td>` +
+      `<td class="r">${moneyCell(o.gap_rub)}</td><td><span class="pill ${STATUS_PILL[o.money_status]}">${STATUS_LABEL[o.money_status]}</span></td><td>${overdue}</td></tr>`;
+  }).join('');
+  document.querySelectorAll('#objTbl tr.clickable').forEach(tr => tr.onclick = () => { sel.value = tr.dataset.uin; drawTraj(tr.dataset.uin); });
+}
 
-document.getElementById('contractorsTbl').innerHTML = DATA.contractors.map(c => {
-  const objs = c.objects.map(o => o.name + (o.no_budget2026 ? ' *' : '')).join(', ');
-  const allStuck = c.objects.length > 1 && c.n_no_budget2026 === c.objects.length;
-  return `<tr${allStuck ? ' style="background:var(--err-bg)"' : ''}><td>${c.contractor}</td><td class="r">${c.objects.length}</td><td class="r">${c.n_no_budget2026 || '—'}</td><td>${objs}</td></tr>`;
-}).join('');
+document.querySelectorAll('#filterBar .fbtn').forEach(btn => btn.onclick = () => {
+  document.querySelectorAll('#filterBar .fbtn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  activeFilter = btn.dataset.f;
+  renderObjTbl();
+});
 
-document.getElementById('objTbl').innerHTML = DATA.objects.map(o => {
-  const days = o.days_to_open;
-  const overdue = days!=null ? (days<0 ? `<span class="pill err">просрочка ${Math.abs(days)} дн.</span>` : `<span class="pill ok">осталось ${days} дн.</span>`) : '—';
-  const overrun = o.exp_overrun!=null ? (o.exp_overrun>5 ? `<span class="pill warn">+${o.exp_overrun}%</span>` : o.exp_overrun+'%') : '—';
-  return `<tr><td title="${o.full}">${o.name}</td><td>${o.municipality||'—'}</td><td>${o.contractor||'—'}</td><td>${o.rp||'—'}</td><td>${o.opening_plan||'—'}</td><td>${overdue}</td><td class="r">${overrun}</td></tr>`;
-}).join('');
+function renderRollup() {
+  const byC = {};
+  DATA.objects.forEach(o => {
+    const c = o.contractor || '—';
+    const e = byC[c] || (byC[c] = { contractor:c, n:0, contract:0, credit:0, no_budget2026:0 });
+    e.n++; e.contract += o.contract_value||0;
+    if (o.money_status==='credit') e.credit += -(o.gap_rub||0);
+    if (o.flags && o.flags.includes('не осваивает бюджет 2026')) e.no_budget2026++;
+  });
+  const rows = Object.values(byC).sort((a,b)=>b.credit-a.credit);
+  document.getElementById('contrRollup').innerHTML = rows.map(c =>
+    `<tr class="clickable${activeContractor===c.contractor?' row-active':''}" data-c="${c.contractor}"><td>${c.contractor}</td><td class="r">${c.n}</td><td class="r">${Math.round(c.contract)}</td><td class="r">${moneyCell(-Math.round(c.credit))}</td><td class="r">${c.no_budget2026||'—'}</td></tr>`
+  ).join('');
+  document.querySelectorAll('#contrRollup tr.clickable').forEach(tr => tr.onclick = () => {
+    activeContractor = activeContractor===tr.dataset.c ? null : tr.dataset.c;
+    renderRollup(); renderObjTbl();
+  });
+}
 
-document.getElementById('ktTbl').innerHTML = [...DATA.per].sort((a,b)=>(b.flags?.length||0)-(a.flags?.length||0)).map(p=>{
-  const k = DATA.kt_dates[p.uin]||{};
-  const exp = [k.exp_sl,k.exp_plan,k.exp_fact].filter(Boolean).join(' / ') || '—';
-  return `<tr><td>${p.name}</td><td class="r">${p.sg}</td><td class="r">${p.plan??'—'}</td><td class="r">${p.sg_plan_gap??'—'}</td><td class="r">${p.pct??'—'}</td><td class="r">${p.sg!=null&&p.pct!=null?(p.sg-p.pct).toFixed(0):'—'}</td><td>${exp}</td><td>${k.smr_start||'—'}</td><td>${k.ctr_fact||'—'}</td><td>${flagsHtml(p.flags)}</td></tr>`;
-}).join('');
-
-document.getElementById('tbl').innerHTML = DATA.per.map(p => {
-  const gap = p.pct!=null ? (p.sg-p.pct).toFixed(0) : '—';
-  return `<tr><td>${p.name}</td><td class="r">${p.sg}</td><td class="r">${p.plan??'—'}</td><td class="r">${p.pct??'—'}</td><td class="r">${gap}</td><td class="r">${p.r!=null?p.r.toFixed(2):'—'}</td></tr>`;
-}).join('');
+renderObjTbl();
+renderRollup();
 
 const sel = document.getElementById('selSchool');
-DATA.per.filter(p=>p.vary).forEach(p=>{
-  const o=document.createElement('option'); o.value=p.uin;
-  o.textContent=p.name + (p.flags?.length ? ' *' : ''); sel.appendChild(o);
+DATA.objects.forEach(o=>{
+  const opt=document.createElement('option'); opt.value=o.uin;
+  opt.textContent=o.name; sel.appendChild(opt);
 });
 sel.value = DATA.defaultUin;
 let chartTraj;
@@ -948,29 +947,7 @@ function drawTraj(uin) {
 }
 sel.onchange = e => drawTraj(e.target.value);
 
-function initDetailCharts() {
-  if(charts.scatter) return;
-  charts.scatter = true;
-  const pts = DATA.cross.filter(s=>s.pct!=null);
-  const mk2 = s => ({x:s.pct,y:s.sg,name:s.name,adv:s.advance});
-  const line=[]; for(let x=25;x<=95;x+=5) line.push({x,y:DATA.reg.a+DATA.reg.b*x});
-  new Chart(document.getElementById('cScatter'), {
-    type:'scatter',
-    data:{ datasets:[
-      { label:'Свой процент', data:pts.filter(s=>!s.advance).map(mk2), backgroundColor:'rgba(18,104,128,.75)', pointRadius:4 },
-      { label:'Аванс (30% или 49%)', data:pts.filter(s=>s.advance).map(mk2), backgroundColor:'rgba(147,168,188,.55)', pointRadius:4 },
-      { label:'Тренд по всем школам', data:line, type:'line', borderColor:blue, borderDash:[5,4], pointRadius:0 }
-    ]},
-    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}, datalabels:{display:false},
-      tooltip:{callbacks:{label:c=>c.raw.name ? `${c.raw.name}: выплаты ${c.raw.x}%${c.raw.adv?' (аванс)':''}, СГ ${c.raw.y}%` : 'тренд'}}},
-      scales:{ x:{title:{display:true,text:'Выплаты, %'},min:20,max:100}, y:{title:{display:true,text:'СГ, %'},min:70,max:100} } }
-  });
-  drawTraj(sel.value);
-  charts.traj = true;
-}
-
-initDetailCharts();
-document.getElementById('secCharts').addEventListener('toggle', e => { if(e.target.open) initDetailCharts(); });
+drawTraj(sel.value);
 </script>
 </body>
 </html>
@@ -1058,13 +1035,15 @@ def main():
         HEAD_STYLE.replace("__TITLE__", "СГ и выплаты — методика")
         .replace("__SUB__", sub + " — методика управления финансированием портфеля")
         .replace("__NAV__", '<a class="navlink" href="dashboard.html">→ Дашборд по объектам</a>')
+        .replace("__WRAP__", "880")
         + METHOD_BODY
         + METHOD_SCRIPT.replace("__DATA__", data_json)
     )
     dashboard_html = (
         HEAD_STYLE.replace("__TITLE__", "СГ и выплаты — дашборд")
-        .replace("__SUB__", sub + " — объекты, графики, полные таблицы")
+        .replace("__SUB__", sub + " — объекты, подрядчики, деньги против готовности")
         .replace("__NAV__", '<a class="navlink" href="index.html">→ Методика и выводы</a>')
+        .replace("__WRAP__", "1440")
         + DASHBOARD_BODY
         + DASHBOARD_SCRIPT.replace("__DATA__", data_json)
     )
