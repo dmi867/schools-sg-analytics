@@ -433,6 +433,18 @@ def load_data():
         else:
             money_status = "balanced"
 
+        # Финансовая аналитика объекта: остаток физической работы (в рублях по цене контракта)
+        # против остатка бюджета, ещё не потраченного в 2026+ году. Если денег заметно меньше,
+        # чем нужно на остаток работ — недофинансирование, нужно искать откуда добавить.
+        # Если заметно больше — план завышен, можно снять и перекинуть на другой объект.
+        budget_mismatch = None
+        if contract_value:
+            remaining_work_rub = (100 - last["fact"]) / 100 * contract_value
+            future_years = [y for y in program_years if y["year"] >= 2026]
+            if future_years:
+                remaining_plan_rub = sum(y["plan"] - y["fact"] for y in future_years)
+                budget_mismatch = round((remaining_plan_rub - remaining_work_rub) / 1e6, 1)
+
         kt_rows.append(
             {
                 "uin": uin,
@@ -460,6 +472,7 @@ def load_data():
                 "gap_pct": gap_pct,
                 "gap_rub": gap_rub,
                 "money_status": money_status,
+                "budget_mismatch": budget_mismatch,
             }
         )
 
@@ -823,8 +836,8 @@ DASHBOARD_BODY = r"""
   <div class="tbl-wrap" style="max-height:520px">
     <table class="full">
       <thead><tr>
-        <th>Школа</th><th>Округ</th><th>Подрядчик</th><th class="r">Контракт, млн ₽</th>
-        <th class="r">СГ</th><th class="r">Оплата</th><th class="r">Разница, млн ₽</th><th>Статус</th><th>Ввод</th>
+        <th>Школа</th><th>Округ</th><th>Подрядчик</th><th>РП</th><th class="r">Контракт, млн ₽</th>
+        <th class="r">СГ</th><th class="r">Оплата</th><th class="r">Разница, млн ₽</th><th>Статус</th><th>Ввод</th><th class="r">Экспертиза</th>
       </tr></thead>
       <tbody id="objTbl"></tbody>
     </table>
@@ -858,6 +871,7 @@ DASHBOARD_BODY = r"""
     <thead><tr><th>Год</th><th class="r">План</th><th class="r">Обязательства</th><th class="r">Факт</th><th class="r">Без обязательств</th></tr></thead>
     <tbody id="programYearsTbl"></tbody>
   </table>
+  <p class="note" id="budgetMismatchNote" style="margin-top:8px;font-weight:600"></p>
 """
 
 DASHBOARD_SCRIPT = r"""</div>
@@ -893,9 +907,10 @@ function renderObjTbl() {
   document.getElementById('objTbl').innerHTML = rows.map(o => {
     const days = o.days_to_open;
     const overdue = days!=null ? (days<0 ? `<span class="pill err">просрочка ${Math.abs(days)} дн.</span>` : `<span class="pill ok">осталось ${days} дн.</span>`) : '—';
-    return `<tr class="clickable" data-uin="${o.uin}"><td title="${o.full}">${o.name}</td><td>${o.municipality||'—'}</td><td>${o.contractor||'—'}</td>` +
+    const overrun = o.exp_overrun!=null ? (o.exp_overrun>5 ? `<span class="pill warn">+${o.exp_overrun}%</span>` : o.exp_overrun+'%') : (o.entered_exp?'без удорожания':'не зашла');
+    return `<tr class="clickable" data-uin="${o.uin}"><td title="${o.full}">${o.name}</td><td>${o.municipality||'—'}</td><td>${o.contractor||'—'}</td><td>${o.rp||'—'}</td>` +
       `<td class="r">${o.contract_value??'—'}</td><td class="r">${o.sg}%</td><td class="r">${o.pct??'—'}%</td>` +
-      `<td class="r">${moneyCell(o.gap_rub)}</td><td><span class="pill ${STATUS_PILL[o.money_status]}">${STATUS_LABEL[o.money_status]}</span></td><td>${overdue}</td></tr>`;
+      `<td class="r">${moneyCell(o.gap_rub)}</td><td><span class="pill ${STATUS_PILL[o.money_status]}">${STATUS_LABEL[o.money_status]}</span></td><td>${overdue}</td><td class="r">${overrun}</td></tr>`;
   }).join('');
   document.querySelectorAll('#objTbl tr.clickable').forEach(tr => tr.onclick = () => { sel.value = tr.dataset.uin; drawTraj(tr.dataset.uin); });
 }
@@ -962,6 +977,13 @@ function drawTraj(uin) {
     const unbacked = y.unbacked || 0;
     return `<tr><td>${y.year}</td><td class="r">${Math.round(y.plan/1e6)}</td><td class="r">${Math.round(y.obligated/1e6)}</td><td class="r">${Math.round(y.fact/1e6)}</td><td class="r">${unbacked>0?'<span class=\"money neg\">'+Math.round(unbacked/1e6)+'</span>':'—'}</td></tr>`;
   }).join('') : '<tr><td colspan="5">Нет данных по годам</td></tr>';
+
+  const bm = obj ? obj.budget_mismatch : null;
+  const bmEl = document.getElementById('budgetMismatchNote');
+  if (bm==null) { bmEl.textContent = ''; }
+  else if (bm < -20) { bmEl.innerHTML = `⚠ Похоже, не хватает денег: физической работы осталось больше, чем запланировано в бюджете на этот и следующие годы — дефицит ≈ ${Math.abs(Math.round(bm))} млн ₽. Надо думать, откуда доставить.`; bmEl.style.color = '#A32E2E'; }
+  else if (bm > 50) { bmEl.innerHTML = `План по годам заметно больше, чем нужно на остаток работ (запас ≈ ${Math.round(bm)} млн ₽) — можно снять и перекинуть на другой объект.`; bmEl.style.color = '#8A5E10'; }
+  else { bmEl.innerHTML = `План по годам примерно соответствует остатку работ.`; bmEl.style.color = '#1E8449'; }
 }
 sel.onchange = e => drawTraj(e.target.value);
 
