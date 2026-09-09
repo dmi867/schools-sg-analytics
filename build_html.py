@@ -230,10 +230,15 @@ def load_simple_list():
     for uin, rows in years.items():
         by_year = {}
         for r in rows:
-            e = by_year.setdefault(r["year"], {"year": r["year"], "plan": 0, "obligated": 0, "fact": 0})
+            e = by_year.setdefault(r["year"], {"year": r["year"], "plan": 0, "obligated": 0, "fact": 0, "unbacked": 0})
             e["plan"] += r["plan"]
             e["obligated"] += r["obligated"]
             e["fact"] += r["fact"]
+            # Каждая строка своя (разные источники финансирования внутри года) — если считать
+            # "без обязательств" по сумме за год, необеспеченная строка маскируется другой
+            # строкой с обязательствами за тот же год. Проверяем каждую строку отдельно.
+            if r["obligated"] == 0 and r["fact"] == 0:
+                e["unbacked"] += r["plan"]
         if uin in sl:
             sl[uin]["program_years"] = sorted(by_year.values(), key=lambda x: x["year"])
     return sl
@@ -408,11 +413,11 @@ def load_data():
         contractor = short_contractor(info.get("contractor"))
         addr = addresses.get(uin, {})
         opening_plan = info.get("opening_plan")
-        days_to_open = (opening_plan - datetime.now()).days if opening_plan else None
+        days_to_open = (opening_plan.date() - datetime.now().date()).days if opening_plan else None
 
         program_years = info.get("program_years", [])
         program_unbacked = round(
-            sum(y["plan"] for y in program_years if y["year"] <= 2026 and y["obligated"] == 0 and y["fact"] == 0) / 1e6,
+            sum(y.get("unbacked", 0) for y in program_years if y["year"] <= 2026) / 1e6,
             1,
         )
 
@@ -847,6 +852,12 @@ DASHBOARD_BODY = r"""
   <div class="chart"><canvas id="cTraj"></canvas></div>
   <p class="note" id="ktLine"></p>
   <p class="note">Синяя — факт, пунктир — план, зелёная — % от суммы контракта, уже выплаченной на эту дату.</p>
+
+  <p class="note" style="margin-top:14px"><strong>Лимит по годам (госпрограмма), млн ₽</strong> — план по годам может не совпадать с суммой контракта: контракт заключается на часть лимита, остальное — лимит без обязательств.</p>
+  <table class="mini">
+    <thead><tr><th>Год</th><th class="r">План</th><th class="r">Обязательства</th><th class="r">Факт</th><th class="r">Без обязательств</th></tr></thead>
+    <tbody id="programYearsTbl"></tbody>
+  </table>
 """
 
 DASHBOARD_SCRIPT = r"""</div>
@@ -944,6 +955,13 @@ function drawTraj(uin) {
     { label:'Аванс', data:rows.map(r=>r.advPct), borderColor:green, borderDash:[2,2], tension:.25, pointRadius:0 }
   ]}, options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}, datalabels:{display:false}, annotation:{annotations}}, scales:{ y:{min:0,max:100} } } };
   if(chartTraj) chartTraj.destroy(); chartTraj = new Chart(document.getElementById('cTraj'), cfg);
+
+  const obj = DATA.objects.find(o=>o.uin===uin);
+  const years = (obj && obj.program_years) || [];
+  document.getElementById('programYearsTbl').innerHTML = years.length ? years.map(y => {
+    const unbacked = y.unbacked || 0;
+    return `<tr><td>${y.year}</td><td class="r">${Math.round(y.plan/1e6)}</td><td class="r">${Math.round(y.obligated/1e6)}</td><td class="r">${Math.round(y.fact/1e6)}</td><td class="r">${unbacked>0?'<span class=\"money neg\">'+Math.round(unbacked/1e6)+'</span>':'—'}</td></tr>`;
+  }).join('') : '<tr><td colspan="5">Нет данных по годам</td></tr>';
 }
 sel.onchange = e => drawTraj(e.target.value);
 
