@@ -258,6 +258,50 @@ def load_addresses():
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+OPEN_EXPERTISE_STAGES = {
+    "Ожидание устранения замечаний", "Рассмотрение ПД", "Подготовка заключения",
+    "Ожидание загрузки документации", "Ожидание возврата договора", "Обработка",
+}
+
+
+def load_pir():
+    path = ROOT / "0709_Выгрузка_ПИР.xlsx"
+    if not path.exists():
+        return {}
+    wb = openpyxl.load_workbook(path, data_only=True)
+    ws = wb.active
+    headers = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
+    col = {h: i for i, h in enumerate(headers)}
+    by_uin = {}
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        uin = row[col["УИН"]]
+        if not uin:
+            continue
+        by_uin.setdefault(uin, []).append(
+            {
+                "stage": row[col["Стадия рассмотрения"]],
+                "result": row[col["Результат экспертизы"]],
+                "egrz_date": parse_date(row[col["Дата заключения ЕГРЗ. Дата"]]),
+                "pir_start_fact": parse_date(row[col["ПИР Дата начала факт"]]),
+                "pir_end_fact": parse_date(row[col["ПИР Дата окончания факт"]]),
+                "pir_end_plan": parse_date(row[col["ПИР Дата начала план"]]),
+            }
+        )
+
+    out = {}
+    for uin, rows in by_uin.items():
+        concluded = [r for r in rows if r["stage"] == "Услуга оказана" and r["egrz_date"]]
+        last = max(concluded, key=lambda r: r["egrz_date"]) if concluded else None
+        pir_end = max((r["pir_end_fact"] for r in rows if r["pir_end_fact"]), default=None)
+        out[uin] = {
+            "exp_last_result": last["result"] if last else None,
+            "exp_last_date": fmt_date(last["egrz_date"]) if last else None,
+            "exp_pending": any(r["stage"] in OPEN_EXPERTISE_STAGES for r in rows),
+            "pir_end_fact": fmt_date(pir_end),
+        }
+    return out
+
+
 def build_flags(last, info, exp, smr, rs, ctr):
     flags = []
     sg_plan_gap = round(last["fact"] - last["plan"], 1) if last["plan"] is not None else None
@@ -287,6 +331,7 @@ def load_data():
     ksg = load_ksg()
     fin2026 = load_finance2026()
     addresses = load_addresses()
+    pir = load_pir()
 
     cross, per, traj, kt_rows, kt_dates = [], [], {}, [], {}
     budget_alert = []
@@ -445,6 +490,12 @@ def load_data():
                 remaining_plan_rub = sum(y["plan"] - y["fact"] for y in future_years)
                 budget_mismatch = round((remaining_plan_rub - remaining_work_rub) / 1e6, 1)
 
+        pir_info = pir.get(uin, {})
+        if pir_info.get("exp_last_result") == "Отрицательное":
+            flags.append("экспертиза отклонена")
+        elif pir_info.get("exp_pending"):
+            flags.append("экспертиза на пересмотре")
+
         kt_rows.append(
             {
                 "uin": uin,
@@ -473,6 +524,10 @@ def load_data():
                 "gap_rub": gap_rub,
                 "money_status": money_status,
                 "budget_mismatch": budget_mismatch,
+                "exp_last_result": pir_info.get("exp_last_result"),
+                "exp_last_date": pir_info.get("exp_last_date"),
+                "exp_pending": pir_info.get("exp_pending", False),
+                "pir_end_fact": pir_info.get("pir_end_fact"),
             }
         )
 
@@ -622,6 +677,7 @@ def load_data():
             "pearson_no_advance_p": two_tailed_p(pearson_na, len(no_adv)),
             "n_no_budget2026": len(budget_alert),
             "n_red_zone": sum(1 for r in red_zone if r["deviation"] > 15),
+            "n_exp_failed": sum(1 for o in kt_rows if o["exp_last_result"] == "Отрицательное" or o["exp_pending"]),
         },
         "budget_alert": budget_alert,
         "contractors": contractors,
@@ -786,6 +842,15 @@ METHOD_BODY = r"""
       </table>
     </div>
 
+    <strong style="display:block;margin-top:20px;font-size:1.05rem">7. У <span id="expFailedN"></span> школ экспертиза не пройдена — вот куда смотреть, почему стоят деньги</strong>
+    <p class="note">Появился источник, которого не было раньше (выгрузка ПИР): по каждой заявке на экспертизу видно её реальный результат и историю. У части школ последнее полученное заключение — «Отрицательное», у части сейчас открыта незакрытая заявка на пересмотр. Больше половины этих школ уже были в красной зоне или списке нулевого освоения выше — это, похоже, и есть причина, а не совпадение.</p>
+    <div class="tbl-wrap" style="max-height:280px">
+      <table class="full">
+        <thead><tr><th>Школа</th><th class="r">СГ</th><th>Результат экспертизы</th><th>Дата</th><th>Сейчас на пересмотре</th></tr></thead>
+        <tbody id="expFailedTbl"></tbody>
+      </table>
+    </div>
+
     <strong style="display:block;margin-top:20px;font-size:1.05rem">Данных не хватает — заглушки вместо разделов</strong>
     <div class="box stub">
       <span class="stub-label">Данных нет</span>
@@ -807,7 +872,7 @@ METHOD_BODY = r"""
 
     <strong style="display:block;margin-top:20px">Чего не хватает для более точного анализа</strong>
     <ul class="brief">
-      <li>Причина конкретной задержки (акты не поданы / спор / организационная пробуксовка) в этих данных не видна — по каждой школе из красной зоны и нулевого списка её ещё предстоит выяснить у заказчика и подрядчика.</li>
+      <li>Причина теперь видна не для всех: у части школ из красной зоны и нулевого списка нашлась конкретная причина — отклонённая экспертиза (раздел 7). Но не для всех — у оставшихся причину (акты не поданы / спор / организационная пробуксовка) всё ещё предстоит выяснить у заказчика и подрядчика напрямую.</li>
       <li>Нет истории по годам: неизвестно, типична ли пробуксовка в начале года — возможно, часть объектов обычно нагоняет в четвёртом квартале, и тогда часть «красной зоны» — не риск, а сезонность.</li>
       <li>Нет данных об условиях контрактов (штрафы, порядок расторжения) — непонятно, какие реальные рычаги есть на переговорах с проблемными подрядчиками.</li>
       <li>Список подрядчиков и бюджет 2026 года сверены вручную один раз по состоянию на начало сентября — при обновлении отчёта их нужно сверять заново, автоматически это не пересчитывается.</li>
@@ -831,6 +896,7 @@ DASHBOARD_BODY = r"""
     <button class="fbtn" data-f="credit">Подрядчик кредитует &gt;100 млн ₽</button>
     <button class="fbtn" data-f="balanced">Баланс</button>
     <button class="fbtn" data-f="nobudget">0% освоения 2026</button>
+    <button class="fbtn" data-f="expfail">Экспертиза отклонена/на пересмотре</button>
   </div>
 
   <div class="tbl-wrap" style="max-height:520px">
@@ -899,6 +965,7 @@ function passesFilter(o) {
   if (activeFilter==='credit') return o.money_status==='credit' && Math.abs(o.gap_rub||0)>100;
   if (activeFilter==='balanced') return o.money_status==='balanced';
   if (activeFilter==='nobudget') return o.flags && o.flags.includes('не осваивает бюджет 2026');
+  if (activeFilter==='expfail') return o.exp_last_result==='Отрицательное' || o.exp_pending;
   return true;
 }
 
@@ -907,7 +974,10 @@ function renderObjTbl() {
   document.getElementById('objTbl').innerHTML = rows.map(o => {
     const days = o.days_to_open;
     const overdue = days!=null ? (days<0 ? `<span class="pill err">просрочка ${Math.abs(days)} дн.</span>` : `<span class="pill ok">осталось ${days} дн.</span>`) : '—';
-    const overrun = o.exp_overrun!=null ? (o.exp_overrun>5 ? `<span class="pill warn">+${o.exp_overrun}%</span>` : o.exp_overrun+'%') : (o.entered_exp?'без удорожания':'не зашла');
+    let overrun;
+    if (o.exp_last_result==='Отрицательное') overrun = '<span class="pill err">отклонена</span>';
+    else if (o.exp_pending) overrun = '<span class="pill warn">на пересмотре</span>';
+    else overrun = o.exp_overrun!=null ? (o.exp_overrun>5 ? `<span class="pill warn">+${o.exp_overrun}%</span>` : o.exp_overrun+'%') : (o.entered_exp?'без удорожания':'не зашла');
     return `<tr class="clickable" data-uin="${o.uin}"><td title="${o.full}">${o.name}</td><td>${o.municipality||'—'}</td><td>${o.contractor||'—'}</td><td>${o.rp||'—'}</td>` +
       `<td class="r">${o.contract_value??'—'}</td><td class="r">${o.sg}%</td><td class="r">${o.pct??'—'}%</td>` +
       `<td class="r">${moneyCell(o.gap_rub)}</td><td><span class="pill ${STATUS_PILL[o.money_status]}">${STATUS_LABEL[o.money_status]}</span></td><td>${overdue}</td><td class="r">${overrun}</td></tr>`;
@@ -1056,6 +1126,12 @@ function initMethod() {
   document.getElementById('mthContr').textContent = stuck.length
     ? `У ${stuck.map(c=>c.contractor+' ('+c.n_no_budget2026+' из '+c.objects.length+' объектов)').join(', ')} без исполнения 2026 года стоит каждый объект. Разбор здесь нужен на уровне договора с подрядчиком, а не по одной школе за раз.`
     : 'На этой выгрузке подрядчиков, у которых стоят все объекты сразу, нет — если появится хотя бы один, это приоритетный сигнал.';
+
+  document.getElementById('expFailedN').textContent = DATA.stats.n_exp_failed;
+  const expFailed = DATA.objects.filter(o=>o.exp_last_result==='Отрицательное' || o.exp_pending);
+  document.getElementById('expFailedTbl').innerHTML = expFailed.map(o =>
+    `<tr><td title="${o.full}">${o.name}</td><td class="r">${o.sg}%</td><td>${o.exp_last_result==='Отрицательное' ? '<span class=\"pill err\">Отрицательное</span>' : (o.exp_last_result||'—')}</td><td>${o.exp_last_date||'—'}</td><td>${o.exp_pending ? '<span class=\"pill warn\">да</span>' : '—'}</td></tr>`
+  ).join('');
 }
 
 initStage();
