@@ -594,12 +594,12 @@ def load_data():
     }
 
 
-HTML_TEMPLATE = r"""<!DOCTYPE html>
+HEAD_STYLE = r"""<!DOCTYPE html>
 <html lang="ru">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>СГ и выплаты — 48 школ</title>
+<title>__TITLE__</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -661,13 +661,18 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .kpis.four { grid-template-columns:repeat(4,1fr) }
   @media(max-width:900px) { .kpis.four { grid-template-columns:repeat(2,1fr) } }
   @media(max-width:700px) { .kpis,.kpis.four { grid-template-columns:1fr } }
+  .navlink { display:inline-block; margin:0 0 16px; font-size:.85rem; color:var(--accent-d); text-decoration:none; font-weight:600 }
+  .navlink:hover { text-decoration:underline }
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>СГ и выплаты</h1>
-  <p class="sub">48 школ, обновлено 07.09.2026 — методика управления финансированием портфеля</p>
+  <p class="sub">__SUB__</p>
+  __NAV__
+"""
 
+METHOD_BODY = r"""
   <div class="box" id="methodBox">
     <p class="note" style="margin:0 0 10px">Портфель — 48 капремонтов школ. Ниже — риск по деньгам, а не по проценту готовности: пять правил и решения, которые из них следуют. У каждого правила — цифры конкретно по этому портфелю, без общих слов.</p>
 
@@ -753,7 +758,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       <li>Порог красной зоны (отклонение 15+ п.п.) — эвристика по видимому разрыву в данных, а не статистически откалиброванный норматив: выборка в 48 объектов для этого небольшая.</li>
     </ul>
   </div>
+"""
 
+DASHBOARD_BODY = r"""
   <details id="secCharts" open>
     <summary>Графики: готовность и выплаты по портфелю</summary>
     <div class="detail-body">
@@ -807,6 +814,16 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         </table>
       </div>
 
+      <strong style="display:block;margin-top:16px;margin-bottom:8px">Подрядчики</strong>
+      <div class="tbl-wrap">
+        <table class="full">
+          <thead><tr>
+            <th>Подрядчик</th><th class="r">Объектов</th><th class="r">Не осваивают бюджет 2026</th><th>Объекты</th>
+          </tr></thead>
+          <tbody id="contractorsTbl"></tbody>
+        </table>
+      </div>
+
       <strong style="display:block;margin-top:16px;margin-bottom:8px">Кого смотреть первым (по всем замечаниям, не только по деньгам)</strong>
       <table class="mini">
         <thead><tr><th>Школа</th><th class="r">СГ</th><th class="r">План</th><th class="r">Выпл.</th><th>Что не так</th></tr></thead>
@@ -846,7 +863,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       <p class="note">Данные: файлы СГ, платежи, Simple List, КСГ+Экспертиза, факт финансирования по соцобъектам (сверен по адресам через kr-obr).</p>
     </div>
   </details>
-</div>
+"""
+
+DASHBOARD_SCRIPT = r"""</div>
 <script>
 const DATA = __DATA__;
 const blue='#126880', blueL='rgba(18,104,128,.35)', green='#27AE60';
@@ -875,32 +894,12 @@ document.getElementById('ktAttn').innerHTML = DATA.kt_attention.map(s =>
 document.getElementById('b1').textContent = DATA.stats.n_sg_behind_plan;
 document.getElementById('b2').textContent = DATA.stats.n_sg_ahead;
 document.getElementById('b3').textContent = DATA.stats.n_smr_before_exp;
-document.getElementById('k6').textContent = DATA.stats.n_no_budget2026;
-
-document.getElementById('budgetAlert').innerHTML = DATA.budget_alert.map(s =>
-  `<tr><td title="${s.full}">${s.name}</td><td class="r">${s.sg}%</td><td class="r">${s.plan2026}</td></tr>`
-).join('');
 
 document.getElementById('contractorsTbl').innerHTML = DATA.contractors.map(c => {
   const objs = c.objects.map(o => o.name + (o.no_budget2026 ? ' *' : '')).join(', ');
   const allStuck = c.objects.length > 1 && c.n_no_budget2026 === c.objects.length;
   return `<tr${allStuck ? ' style="background:var(--err-bg)"' : ''}><td>${c.contractor}</td><td class="r">${c.objects.length}</td><td class="r">${c.n_no_budget2026 || '—'}</td><td>${objs}</td></tr>`;
 }).join('');
-
-document.getElementById('redZoneTbl').innerHTML = DATA.red_zone.filter(s=>s.deviation>15).map(s =>
-  `<tr><td title="${s.full}">${s.name}</td><td class="r">${s.sg}%</td><td class="r">${s.gap}</td><td class="r">${s.stage_median}</td><td class="r">+${s.deviation}</td></tr>`
-).join('');
-
-document.getElementById('advOnlyN').textContent = DATA.advance_only.length;
-document.getElementById('advOnlyTbl').innerHTML = [...DATA.advance_only].sort((a,b)=>b.sg-a.sg).map(s =>
-  `<tr><td title="${s.full}">${s.name}</td><td class="r">${s.sg}%</td><td class="r">${s.advPct}%</td></tr>`
-).join('');
-
-const unbacked = DATA.objects.filter(o=>o.program_unbacked>0).sort((a,b)=>b.program_unbacked-a.program_unbacked);
-document.getElementById('unbackedN').textContent = unbacked.length;
-document.getElementById('unbackedTbl').innerHTML = unbacked.map(o =>
-  `<tr><td title="${o.full}">${o.name}</td><td class="r">${o.sg}%</td><td class="r">${o.program_unbacked}</td></tr>`
-).join('');
 
 document.getElementById('objTbl').innerHTML = DATA.objects.map(o => {
   const days = o.days_to_open;
@@ -970,6 +969,45 @@ function initDetailCharts() {
   charts.traj = true;
 }
 
+initDetailCharts();
+document.getElementById('secCharts').addEventListener('toggle', e => { if(e.target.open) initDetailCharts(); });
+</script>
+</body>
+</html>
+"""
+
+METHOD_SCRIPT = r"""</div>
+<script>
+const DATA = __DATA__;
+const blue='#126880', blueL='rgba(18,104,128,.35)', green='#27AE60';
+
+document.getElementById('k6').textContent = DATA.stats.n_no_budget2026;
+
+document.getElementById('budgetAlert').innerHTML = DATA.budget_alert.map(s =>
+  `<tr><td title="${s.full}">${s.name}</td><td class="r">${s.sg}%</td><td class="r">${s.plan2026}</td></tr>`
+).join('');
+
+document.getElementById('contractorsTbl').innerHTML = DATA.contractors.map(c => {
+  const objs = c.objects.map(o => o.name + (o.no_budget2026 ? ' *' : '')).join(', ');
+  const allStuck = c.objects.length > 1 && c.n_no_budget2026 === c.objects.length;
+  return `<tr${allStuck ? ' style="background:var(--err-bg)"' : ''}><td>${c.contractor}</td><td class="r">${c.objects.length}</td><td class="r">${c.n_no_budget2026 || '—'}</td><td>${objs}</td></tr>`;
+}).join('');
+
+document.getElementById('redZoneTbl').innerHTML = DATA.red_zone.filter(s=>s.deviation>15).map(s =>
+  `<tr><td title="${s.full}">${s.name}</td><td class="r">${s.sg}%</td><td class="r">${s.gap}</td><td class="r">${s.stage_median}</td><td class="r">+${s.deviation}</td></tr>`
+).join('');
+
+document.getElementById('advOnlyN').textContent = DATA.advance_only.length;
+document.getElementById('advOnlyTbl').innerHTML = [...DATA.advance_only].sort((a,b)=>b.sg-a.sg).map(s =>
+  `<tr><td title="${s.full}">${s.name}</td><td class="r">${s.sg}%</td><td class="r">${s.advPct}%</td></tr>`
+).join('');
+
+const unbacked = DATA.objects.filter(o=>o.program_unbacked>0).sort((a,b)=>b.program_unbacked-a.program_unbacked);
+document.getElementById('unbackedN').textContent = unbacked.length;
+document.getElementById('unbackedTbl').innerHTML = unbacked.map(o =>
+  `<tr><td title="${o.full}">${o.name}</td><td class="r">${o.sg}%</td><td class="r">${o.program_unbacked}</td></tr>`
+).join('');
+
 function initStage() {
   const s = DATA.stage_analysis;
   new Chart(document.getElementById('cStage'), {
@@ -1005,8 +1043,6 @@ function initMethod() {
 
 initStage();
 initMethod();
-initDetailCharts();
-document.getElementById('secCharts').addEventListener('toggle', e => { if(e.target.open) initDetailCharts(); });
 </script>
 </body>
 </html>
@@ -1015,11 +1051,30 @@ document.getElementById('secCharts').addEventListener('toggle', e => { if(e.targ
 
 def main():
     payload = load_data()
-    html = HTML_TEMPLATE.replace("__DATA__", json.dumps(payload, ensure_ascii=False))
+    data_json = json.dumps(payload, ensure_ascii=False)
+    sub = "48 школ, обновлено 07.09.2026"
+
+    method_html = (
+        HEAD_STYLE.replace("__TITLE__", "СГ и выплаты — методика")
+        .replace("__SUB__", sub + " — методика управления финансированием портфеля")
+        .replace("__NAV__", '<a class="navlink" href="dashboard.html">→ Дашборд по объектам</a>')
+        + METHOD_BODY
+        + METHOD_SCRIPT.replace("__DATA__", data_json)
+    )
+    dashboard_html = (
+        HEAD_STYLE.replace("__TITLE__", "СГ и выплаты — дашборд")
+        .replace("__SUB__", sub + " — объекты, графики, полные таблицы")
+        .replace("__NAV__", '<a class="navlink" href="index.html">→ Методика и выводы</a>')
+        + DASHBOARD_BODY
+        + DASHBOARD_SCRIPT.replace("__DATA__", data_json)
+    )
+
     out = ROOT / "index.html"
-    out.write_text(html, encoding="utf-8")
-    (ROOT / "sg-pay-analysis.html").write_text(html, encoding="utf-8")
-    print(f"OK: {out} ({out.stat().st_size} bytes, {payload['stats']['n']} schools)")
+    out.write_text(method_html, encoding="utf-8")
+    (ROOT / "sg-pay-analysis.html").write_text(method_html, encoding="utf-8")
+    dash_out = ROOT / "dashboard.html"
+    dash_out.write_text(dashboard_html, encoding="utf-8")
+    print(f"OK: {out} ({out.stat().st_size} bytes) + {dash_out} ({dash_out.stat().st_size} bytes), {payload['stats']['n']} schools")
 
 
 if __name__ == "__main__":
