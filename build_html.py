@@ -182,16 +182,25 @@ def load_simple_list():
                 }
             )
 
-        if uin in sl and yr and str(yr).isdigit() and int(yr) <= int(sl[uin].get("yr") or 0):
-            continue
-        pay_pct = None
-        v = row[col["Процент выплат"]]
-        if v is not None:
-            try:
-                pay_pct = round(float(str(v).replace(",", ".")), 1)
-            except ValueError:
-                pass
+        # Раньше строка целиком пропускалась (continue), если её "Год финансирования" был <=
+        # уже сохранённого — расчёт на то, что строки идут по возрастанию года. На практике
+        # это не так: у объекта бывает несколько строк с ОДНИМ и тем же годом (более полная
+        # строка позже) и строка с "Год финансирования" = "0" (сводная/статусная, не привязана
+        # к году, может идти в файле после строк с реальными годами) — такие строки отбрасывались
+        # целиком вместе с полями, которых больше нигде нет (согласованная стоимость экспертизы,
+        # даты экспертизы). Теперь обрабатываем каждую строку: поля объекта (подрядчик, стоимости,
+        # даты) берём из ЛЮБОЙ строки, где они заполнены (later wins при повторении, prev — фолбэк
+        # при пропуске), а "самый свежий год" (для pay_pct и yr) продвигаем только вперёд.
+        yr_is_real = bool(yr) and str(yr).isdigit() and int(yr) >= 1
         prev = sl.get(uin) or {}
+        pay_pct = prev.get("pay_pct")
+        if not yr_is_real or int(yr) >= int(prev.get("yr") or 0):
+            v = row[col["Процент выплат"]]
+            if v is not None:
+                try:
+                    pay_pct = round(float(str(v).replace(",", ".")), 1)
+                except ValueError:
+                    pass
         contractor = row[col["Наименование подрядчика"]] or prev.get("contractor")
         inn = row[col["ИНН подрядчика"]] or prev.get("inn")
         rp = row[col["РП"]] or prev.get("rp")
@@ -207,24 +216,26 @@ def load_simple_list():
             or num("Предельная стоимость по объекту, тыc.руб.")
             or prev.get("contract_value")
         )
+        agreed_cost = agreed_c or prev.get("agreed_cost")
 
         sl[uin] = {
-            "yr": yr,
-            "name": row[col["Название объекта"]],
+            "yr": yr if yr_is_real and int(yr) >= int(prev.get("yr") or 0) else prev.get("yr"),
+            "name": row[col["Название объекта"]] or prev.get("name"),
             "pay_pct": pay_pct,
             "contractor": contractor,
             "inn": inn,
             "rp": rp,
             "contract_value": contract_value,
+            "agreed_cost": agreed_cost,
             "entered_exp": entered_exp,
             "exp_overrun": exp_overrun,
             "exp_plan_entry": parse_date(row[col["Плановая дата захода на экспертизу из ДК"]]) or prev.get("exp_plan_entry"),
             "opening_plan": parse_date(row[col["Планируемая дата открытия"]]) or prev.get("opening_plan"),
-            "exp_in": parse_date(row[col["Дата подачи заявления (захода) на экспертизу"]]),
-            "exp_start": parse_date(row[col["Дата начала экспертизы"]]),
-            "exp_done": parse_date(row[col["Дата получения заключения (завершения ) экспертизы"]]),
-            "ctr_plan": parse_date(row[col["Заключение контракта начало план КСГ"]]),
-            "ctr_fact": parse_date(row[col["Заключение контракта начало факт КСГ"]]),
+            "exp_in": parse_date(row[col["Дата подачи заявления (захода) на экспертизу"]]) or prev.get("exp_in"),
+            "exp_start": parse_date(row[col["Дата начала экспертизы"]]) or prev.get("exp_start"),
+            "exp_done": parse_date(row[col["Дата получения заключения (завершения ) экспертизы"]]) or prev.get("exp_done"),
+            "ctr_plan": parse_date(row[col["Заключение контракта начало план КСГ"]]) or prev.get("ctr_plan"),
+            "ctr_fact": parse_date(row[col["Заключение контракта начало факт КСГ"]]) or prev.get("ctr_fact"),
         }
 
     for uin, rows in years.items():
@@ -496,6 +507,14 @@ def load_data():
         elif pir_info.get("exp_pending"):
             flags.append("экспертиза на пересмотре")
 
+        # Положительное заключение экспертизы подтверждает только техчасть (ОПД) — смета (СД)
+        # заключается отдельно и может отставать. Подтверждаем СД по Simple List: если там
+        # заполнена "Согласованная стоимость объекта экспертизы", смета согласована; если общий
+        # результат "Положительное", а согласованной стоимости нет — СД ещё не закрыта.
+        sd_confirmed = bool(info.get("agreed_cost"))
+        if pir_info.get("exp_last_result") == "Положительное" and not sd_confirmed:
+            flags.append("смета (СД) не подтверждена")
+
         kt_rows.append(
             {
                 "uin": uin,
@@ -528,6 +547,7 @@ def load_data():
                 "exp_last_date": pir_info.get("exp_last_date"),
                 "exp_pending": pir_info.get("exp_pending", False),
                 "pir_end_fact": pir_info.get("pir_end_fact"),
+                "sd_confirmed": sd_confirmed,
             }
         )
 
@@ -678,6 +698,7 @@ def load_data():
             "n_no_budget2026": len(budget_alert),
             "n_red_zone": sum(1 for r in red_zone if r["deviation"] > 15),
             "n_exp_failed": sum(1 for o in kt_rows if o["exp_last_result"] == "Отрицательное" or o["exp_pending"]),
+            "n_sd_unconfirmed": sum(1 for o in kt_rows if o["exp_last_result"] == "Положительное" and not o["sd_confirmed"]),
         },
         "budget_alert": budget_alert,
         "contractors": contractors,
@@ -851,6 +872,8 @@ METHOD_BODY = r"""
       </table>
     </div>
 
+    <p class="note">«Положительное» заключение закрывает только техническую часть — смета (СД) заключается отдельно и может отставать. Считаем смету подтверждённой, если по объекту в Simple List заполнена «Согласованная стоимость объекта экспертизы»; если её нет при общем результате «Положительное» — деньги по факту не согласованы. <span id="sdGapNote"></span></p>
+
     <strong style="display:block;margin-top:20px;font-size:1.05rem">Данных не хватает — заглушки вместо разделов</strong>
     <div class="box stub">
       <span class="stub-label">Данных нет</span>
@@ -977,6 +1000,7 @@ function renderObjTbl() {
     let overrun;
     if (o.exp_last_result==='Отрицательное') overrun = '<span class="pill err">отклонена</span>';
     else if (o.exp_pending) overrun = '<span class="pill warn">на пересмотре</span>';
+    else if (o.exp_last_result==='Положительное' && !o.sd_confirmed) overrun = '<span class="pill warn">СД не подтверждена</span>';
     else overrun = o.exp_overrun!=null ? (o.exp_overrun>5 ? `<span class="pill warn">+${o.exp_overrun}%</span>` : o.exp_overrun+'%') : (o.entered_exp?'без удорожания':'не зашла');
     return `<tr class="clickable" data-uin="${o.uin}"><td title="${o.full}">${o.name}</td><td>${o.municipality||'—'}</td><td>${o.contractor||'—'}</td><td>${o.rp||'—'}</td>` +
       `<td class="r">${o.contract_value??'—'}</td><td class="r">${o.sg}%</td><td class="r">${o.pct??'—'}%</td>` +
@@ -1132,6 +1156,10 @@ function initMethod() {
   document.getElementById('expFailedTbl').innerHTML = expFailed.map(o =>
     `<tr><td title="${o.full}">${o.name}</td><td class="r">${o.sg}%</td><td>${o.exp_last_result==='Отрицательное' ? '<span class=\"pill err\">Отрицательное</span>' : (o.exp_last_result||'—')}</td><td>${o.exp_last_date||'—'}</td><td>${o.exp_pending ? '<span class=\"pill warn\">да</span>' : '—'}</td></tr>`
   ).join('');
+  const sdGap = DATA.objects.filter(o=>o.exp_last_result==='Положительное' && !o.sd_confirmed);
+  document.getElementById('sdGapNote').textContent = sdGap.length
+    ? `Сейчас в этом состоянии ${sdGap.length} ${sdGap.length===1?'школа':'школ'}: ${sdGap.map(o=>o.name).join(', ')}.`
+    : 'Сейчас все школы с положительным заключением имеют согласованную смету.';
 }
 
 initStage();
