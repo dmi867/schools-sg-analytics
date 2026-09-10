@@ -10,6 +10,8 @@ from pathlib import Path
 import openpyxl
 
 ROOT = Path(__file__).parent
+DATA_DIR = ROOT / "data"
+RAW_DIR = DATA_DIR / "raw"
 
 ADVANCE_PCTS = {30.0, 49.0}  # типовые проценты аванса, а не расчётный факт оплаты
 
@@ -120,7 +122,7 @@ def kt_bounds(items):
 
 
 def load_ksg():
-    path = ROOT / "1708_КСГ+Экспертиза.xlsx"
+    path = RAW_DIR / "1708_КСГ+Экспертиза.xlsx"
     if not path.exists():
         return {}
     wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
@@ -149,7 +151,7 @@ SIMPLE_LIST_FILE = "0709_Акцент_Simple List.xlsx"
 
 
 def load_simple_list():
-    wb = openpyxl.load_workbook(ROOT / SIMPLE_LIST_FILE, data_only=True)
+    wb = openpyxl.load_workbook(RAW_DIR / SIMPLE_LIST_FILE, data_only=True)
     ws = wb.active
     headers = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
     col = {h: i for i, h in enumerate(headers)}
@@ -191,10 +193,15 @@ def load_simple_list():
         # даты экспертизы). Теперь обрабатываем каждую строку: поля объекта (подрядчик, стоимости,
         # даты) берём из ЛЮБОЙ строки, где они заполнены (later wins при повторении, prev — фолбэк
         # при пропуске), а "самый свежий год" (для pay_pct и yr) продвигаем только вперёд.
-        yr_is_real = bool(yr) and str(yr).isdigit() and int(yr) >= 1
+        yr_num = None
+        if isinstance(yr, (int, float)):
+            yr_num = int(yr)
+        elif yr is not None and str(yr).strip().isdigit():
+            yr_num = int(str(yr).strip())
+        yr_is_real = yr_num is not None and yr_num >= 1
         prev = sl.get(uin) or {}
         pay_pct = prev.get("pay_pct")
-        if not yr_is_real or int(yr) >= int(prev.get("yr") or 0):
+        if not yr_is_real or yr_num >= (prev.get("yr") or 0):
             v = row[col["Процент выплат"]]
             if v is not None:
                 try:
@@ -207,7 +214,8 @@ def load_simple_list():
         entered_exp = bool(row[col["Код заявления на прохождение экспертизы"]]) or prev.get("entered_exp", False)
 
         exp_overrun = prev.get("exp_overrun")
-        plan_c, agreed_c = num("Плановая стоимость объекта экспертизы"), num("Согласованная стоимость объекта экспертизы")
+        plan_c = num("Плановая стоимость объекта экспертизы") or prev.get("plan_cost")
+        agreed_c = num("Согласованная стоимость объекта экспертизы") or prev.get("agreed_cost")
         if plan_c and agreed_c and plan_c > 0:
             exp_overrun = round((agreed_c - plan_c) / plan_c * 100, 1)
 
@@ -219,7 +227,7 @@ def load_simple_list():
         agreed_cost = agreed_c or prev.get("agreed_cost")
 
         sl[uin] = {
-            "yr": yr if yr_is_real and int(yr) >= int(prev.get("yr") or 0) else prev.get("yr"),
+            "yr": yr_num if yr_is_real and yr_num >= (prev.get("yr") or 0) else prev.get("yr"),
             "name": row[col["Название объекта"]] or prev.get("name"),
             "pay_pct": pay_pct,
             "contractor": contractor,
@@ -227,6 +235,7 @@ def load_simple_list():
             "rp": rp,
             "contract_value": contract_value,
             "agreed_cost": agreed_cost,
+            "plan_cost": plan_c,
             "entered_exp": entered_exp,
             "exp_overrun": exp_overrun,
             "exp_plan_entry": parse_date(row[col["Плановая дата захода на экспертизу из ДК"]]) or prev.get("exp_plan_entry"),
@@ -256,14 +265,21 @@ def load_simple_list():
 
 
 def load_finance2026():
-    path = ROOT / "finance2026.json"
+    path = DATA_DIR / "finance2026.json"
     if not path.exists():
         return {}
     return json.loads(path.read_text(encoding="utf-8"))
 
 
 def load_addresses():
-    path = ROOT / "addresses.json"
+    path = DATA_DIR / "addresses.json"
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def load_per_object():
+    path = DATA_DIR / "per_object.json"
     if not path.exists():
         return {}
     return json.loads(path.read_text(encoding="utf-8"))
@@ -276,7 +292,7 @@ OPEN_EXPERTISE_STAGES = {
 
 
 def load_pir():
-    path = ROOT / "0709_Выгрузка_ПИР.xlsx"
+    path = RAW_DIR / "0709_Выгрузка_ПИР.xlsx"
     if not path.exists():
         return {}
     wb = openpyxl.load_workbook(path, data_only=True)
@@ -349,44 +365,20 @@ def load_data():
     STAGE_EDGES = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
     stage_gaps = {e: {"plan": [], "pay": []} for e in STAGE_EDGES}
 
-    for f in sorted(ROOT.glob("*.xlsx")):
-        if (
-            "_платежи" in f.name
-            or "Акцент" in f.name
-            or "Simple" in f.name
-            or "КСГ" in f.name
-        ):
-            continue
-        uin = f.stem
+    per_object = load_per_object()
+    for uin, rec in sorted(per_object.items()):
         info = sl.get(uin, {})
         name = NAME_OVERRIDES.get(uin, info.get("name", uin))
-        wb = openpyxl.load_workbook(f, data_only=True)
-        series = []
-        for row in wb.active.iter_rows(min_row=2, values_only=True):
-            d = parse_date(row[0])
-            if not d:
-                continue
-            try:
-                plan = float(row[1]) if row[1] is not None else None
-                fact = float(row[2])
-            except (TypeError, ValueError):
-                continue
-            series.append({"d": d, "plan": plan, "fact": fact})
-        series.sort(key=lambda x: x["d"])
+        series = [
+            {"d": parse_date(r["d"]), "plan": r["plan"], "fact": r["fact"]} for r in rec["series"]
+        ]
         if not series:
             continue
 
-        pays = []
-        pf = ROOT / f"{uin}_платежи.xlsx"
-        if pf.exists():
-            wb2 = openpyxl.load_workbook(pf, data_only=True)
-            hdr = [c.value for c in next(wb2.active.iter_rows(min_row=1, max_row=1))]
-            if hdr and hdr[0] == "Тип платежа":
-                for row in wb2.active.iter_rows(min_row=2, values_only=True):
-                    d = parse_date(row[4])
-                    amt = parse_amt(row[5])
-                    if d and amt:
-                        pays.append({"d": d, "amt": amt, "advance": row[0] == "Предоплата"})
+        pays = [
+            {"d": parse_date(r["d"]), "amt": r["amt"], "advance": r["advance"]}
+            for r in rec["pays"]
+        ]
         pays.sort(key=lambda x: x["d"])
         total = sum(p["amt"] for p in pays)
         last = series[-1]
@@ -698,7 +690,6 @@ def load_data():
             "n_no_budget2026": len(budget_alert),
             "n_red_zone": sum(1 for r in red_zone if r["deviation"] > 15),
             "n_exp_failed": sum(1 for o in kt_rows if o["exp_last_result"] == "Отрицательное" or o["exp_pending"]),
-            "n_sd_unconfirmed": sum(1 for o in kt_rows if o["exp_last_result"] == "Положительное" and not o["sd_confirmed"]),
         },
         "budget_alert": budget_alert,
         "contractors": contractors,
