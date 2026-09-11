@@ -470,6 +470,31 @@ def load_data():
         )
 
         contract_value = info.get("contract_value")
+
+        # Лимит по годам из госпрограммы (сумма program_years.plan) может превышать заключённый
+        # контракт — это бюджетные обязательства, присвоенные объекту, но не привязанные ни к
+        # одному контракту (см. transcript 21: "лимит 150, контракт заключён на 100"). Разница —
+        # не ошибка, это может быть будущий этап без контракта, но её стоит видеть отдельно.
+        limit_total = sum(y["plan"] for y in program_years)
+        limit_gap = round((limit_total - contract_value) / 1e6, 1) if contract_value else None
+        if limit_gap is not None and limit_gap > 20:
+            flags.append("лимит превышает контракт")
+
+        # Погодовая разбивка платежей на аванс/исполнение (акты) — из истории платежей
+        # объекта, а не из program_years (которая берёт план/факт из Simple List и не различает
+        # тип платежа).
+        pay_years_acc = {}
+        for p in pays:
+            e = pay_years_acc.setdefault(p["d"].year, {"year": p["d"].year, "advance": 0.0, "act": 0.0})
+            if p["advance"]:
+                e["advance"] += p["amt"]
+            else:
+                e["act"] += p["amt"]
+        pay_years = [
+            {"year": y["year"], "advance": round(y["advance"] / 1e6, 1), "act": round(y["act"] / 1e6, 1)}
+            for y in sorted(pay_years_acc.values(), key=lambda x: x["year"])
+        ]
+
         gap_pct = round(pay_pct - last["fact"], 1) if pay_pct is not None else None
         gap_rub = round(gap_pct / 100 * contract_value / 1e6, 1) if gap_pct is not None and contract_value else None
         if gap_pct is None:
@@ -530,6 +555,8 @@ def load_data():
                 "days_to_open": days_to_open,
                 "program_years": program_years,
                 "program_unbacked": program_unbacked,
+                "limit_gap": limit_gap,
+                "pay_years": pay_years,
                 "contract_value": round(contract_value / 1e6, 1) if contract_value else None,
                 "gap_pct": gap_pct,
                 "gap_rub": gap_rub,
@@ -664,6 +691,43 @@ def load_data():
     varying.sort(key=lambda x: -(x["r"] or -1))
     rs_corr = [p["r"] for p in varying]
 
+    # Единый риск-сигнал "деньги + срок": просто "просрочен" не различает объекты — почти
+    # весь портфель уже просрочен одинаково (типовые -9/-26 дней от единой плановой даты
+    # ввода). Значимый сигнал — не факт просрочки, а то, что объект просрочен СИЛЬНЕЕ
+    # типичного по портфелю И при этом подрядчик уже кредитует стройку деньгами: это
+    # компаунд-риск "не успеет достроить, потому что не хватает денег", а не сезонная
+    # просрочка, которая есть у всех.
+    overdue_vals = [-k["days_to_open"] for k in kt_rows if (k["days_to_open"] or 0) < 0]
+    overdue_median = median(overdue_vals) if overdue_vals else 0
+    for k in kt_rows:
+        d = k["days_to_open"]
+        overdue_days = -d if d is not None and d < 0 else 0
+        k["urgent_risk"] = bool(
+            k["money_status"] == "credit"
+            and overdue_days > overdue_median
+            and (k["gap_rub"] or 0) < -50
+        )
+
+    # Парето по денежному риску: топ объектов по |gap_rub| среди тех, где подрядчик
+    # кредитует стройку, с накопленной долей от суммы риска всех "credit"-объектов —
+    # чтобы видеть, сколько объектов покрывает большую часть денежного риска портфеля.
+    credit_rows = [k for k in kt_rows if k["money_status"] == "credit" and k["gap_rub"]]
+    credit_rows.sort(key=lambda x: x["gap_rub"])
+    total_credit_risk = sum(-k["gap_rub"] for k in credit_rows)
+    pareto = []
+    cum = 0.0
+    for k in credit_rows[:15]:
+        cum += -k["gap_rub"]
+        pareto.append(
+            {
+                "uin": k["uin"],
+                "name": k["name"],
+                "full": k["full"],
+                "gap_rub": k["gap_rub"],
+                "cum_pct": round(cum / total_credit_risk * 100, 1) if total_credit_risk else None,
+            }
+        )
+
     gaps = [s["gap"] for s in cross if s["gap"] is not None]
     kt_sorted = sorted(kt_rows, key=lambda x: (-x["flag_n"], -(x["sg_pay_gap"] or 0)))
 
@@ -690,12 +754,15 @@ def load_data():
             "n_no_budget2026": len(budget_alert),
             "n_red_zone": sum(1 for r in red_zone if r["deviation"] > 15),
             "n_exp_failed": sum(1 for o in kt_rows if o["exp_last_result"] == "Отрицательное" or o["exp_pending"]),
+            "n_urgent_risk": sum(1 for o in kt_rows if o["urgent_risk"]),
+            "n_limit_gap": sum(1 for o in kt_rows if (o["limit_gap"] or 0) > 20),
         },
         "budget_alert": budget_alert,
         "contractors": contractors,
         "stage_analysis": stage_analysis,
         "red_zone": red_zone,
         "advance_only": advance_only,
+        "pareto": pareto,
         "kt_attention": kt_sorted[:10],
         "objects": kt_rows,
         "reg": {"a": round(a, 1), "b": round(b, 4)},
@@ -853,6 +920,13 @@ METHOD_BODY = r"""
         <tbody id="unbackedTbl"></tbody>
       </table>
     </div>
+    <p class="note">Обратная сторона той же проблемы: у <span id="limitGapN"></span> школ сумма лимита по всем годам госпрограммы больше стоимости заключённого контракта на 20+ млн ₽ — это бюджетные обязательства, присвоенные объекту, но не покрытые ни одним действующим контрактом (не обязательно ошибка — может быть будущий этап, который ещё не законтрактован, но проверить стоит).</p>
+    <div class="tbl-wrap" style="max-height:220px">
+      <table class="full">
+        <thead><tr><th>Школа</th><th class="r">Контракт, млн ₽</th><th class="r">Лимит минус контракт, млн ₽</th></tr></thead>
+        <tbody id="limitGapTbl"></tbody>
+      </table>
+    </div>
 
     <strong style="display:block;margin-top:20px;font-size:1.05rem">7. У <span id="expFailedN"></span> школ экспертиза не пройдена — вот куда смотреть, почему стоят деньги</strong>
     <p class="note">Появился источник, которого не было раньше (выгрузка ПИР): по каждой заявке на экспертизу видно её реальный результат и историю. У части школ последнее полученное заключение — «Отрицательное», у части сейчас открыта незакрытая заявка на пересмотр. Больше половины этих школ уже были в красной зоне или списке нулевого освоения выше — это, похоже, и есть причина, а не совпадение.</p>
@@ -911,6 +985,7 @@ DASHBOARD_BODY = r"""
     <button class="fbtn" data-f="balanced">Баланс</button>
     <button class="fbtn" data-f="nobudget">0% освоения 2026</button>
     <button class="fbtn" data-f="expfail">Экспертиза отклонена/на пересмотре</button>
+    <button class="fbtn" data-f="urgent">Просрочен сильнее типового + кредитует</button>
   </div>
 
   <div class="tbl-wrap" style="max-height:520px">
@@ -936,6 +1011,15 @@ DASHBOARD_BODY = r"""
     </table>
   </div>
 
+  <strong style="display:block;margin-top:22px;margin-bottom:8px">Концентрация денежного риска</strong>
+  <p class="note" style="margin-top:0">Топ объектов по сумме, которую за них уже доплатил подрядчик (среди тех, кто «кредитует» стройку), с накопленной долей от всей такой суммы по портфелю.</p>
+  <div class="tbl-wrap" style="max-height:280px">
+    <table class="full">
+      <thead><tr><th>Школа</th><th class="r">Подрядчик доплатил, млн ₽</th><th class="r">Накопленная доля</th></tr></thead>
+      <tbody id="paretoTbl"></tbody>
+    </table>
+  </div>
+
   <strong style="display:block;margin-top:22px;margin-bottom:8px">Один объект</strong>
   <div class="row">
     <select id="selSchool"></select>
@@ -952,6 +1036,12 @@ DASHBOARD_BODY = r"""
     <tbody id="programYearsTbl"></tbody>
   </table>
   <p class="note" id="budgetMismatchNote" style="margin-top:8px;font-weight:600"></p>
+
+  <p class="note" style="margin-top:14px"><strong>Платежи по годам: аванс vs исполнение, млн ₽</strong> — из фактической истории платежей объекта, а не из плана.</p>
+  <table class="mini">
+    <thead><tr><th>Год</th><th class="r">Аванс</th><th class="r">По актам</th></tr></thead>
+    <tbody id="payYearsTbl"></tbody>
+  </table>
 """
 
 DASHBOARD_SCRIPT = r"""</div>
@@ -980,6 +1070,7 @@ function passesFilter(o) {
   if (activeFilter==='balanced') return o.money_status==='balanced';
   if (activeFilter==='nobudget') return o.flags && o.flags.includes('не осваивает бюджет 2026');
   if (activeFilter==='expfail') return o.exp_last_result==='Отрицательное' || o.exp_pending;
+  if (activeFilter==='urgent') return o.urgent_risk;
   return true;
 }
 
@@ -1028,6 +1119,9 @@ function renderRollup() {
 
 renderObjTbl();
 renderRollup();
+document.getElementById('paretoTbl').innerHTML = DATA.pareto.map(o =>
+  `<tr><td title="${o.full}">${o.name}</td><td class="r">${moneyCell(-o.gap_rub)}</td><td class="r">${o.cum_pct}%</td></tr>`
+).join('');
 
 const sel = document.getElementById('selSchool');
 DATA.objects.forEach(o=>{
@@ -1062,6 +1156,11 @@ function drawTraj(uin) {
     const unbacked = y.unbacked || 0;
     return `<tr><td>${y.year}</td><td class="r">${Math.round(y.plan/1e6)}</td><td class="r">${Math.round(y.obligated/1e6)}</td><td class="r">${Math.round(y.fact/1e6)}</td><td class="r">${unbacked>0?'<span class=\"money neg\">'+Math.round(unbacked/1e6)+'</span>':'—'}</td></tr>`;
   }).join('') : '<tr><td colspan="5">Нет данных по годам</td></tr>';
+
+  const payYears = (obj && obj.pay_years) || [];
+  document.getElementById('payYearsTbl').innerHTML = payYears.length ? payYears.map(y =>
+    `<tr><td>${y.year}</td><td class="r">${y.advance}</td><td class="r">${y.act}</td></tr>`
+  ).join('') : '<tr><td colspan="3">Нет данных по платежам</td></tr>';
 
   const bm = obj ? obj.budget_mismatch : null;
   const bmEl = document.getElementById('budgetMismatchNote');
@@ -1108,6 +1207,12 @@ const unbacked = DATA.objects.filter(o=>o.program_unbacked>0).sort((a,b)=>b.prog
 document.getElementById('unbackedN').textContent = unbacked.length;
 document.getElementById('unbackedTbl').innerHTML = unbacked.map(o =>
   `<tr><td title="${o.full}">${o.name}</td><td class="r">${o.sg}%</td><td class="r">${o.program_unbacked}</td></tr>`
+).join('');
+
+const limitGap = DATA.objects.filter(o=>(o.limit_gap||0)>20).sort((a,b)=>b.limit_gap-a.limit_gap);
+document.getElementById('limitGapN').textContent = limitGap.length;
+document.getElementById('limitGapTbl').innerHTML = limitGap.map(o =>
+  `<tr><td title="${o.full}">${o.name}</td><td class="r">${o.contract_value??'—'}</td><td class="r">+${o.limit_gap}</td></tr>`
 ).join('');
 
 function initStage() {
