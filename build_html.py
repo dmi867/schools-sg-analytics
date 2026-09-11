@@ -916,7 +916,7 @@ METHOD_BODY = r"""
     <p class="note"><span id="unbackedN"></span> школ показывают лимит финансирования на 2025–2026 год, под который до сих пор не оформлены бюджетные обязательства (и, соответственно, нет исполнения) — это отдельный вид риска, почти не пересекающийся со списком нулевого освоения выше: деньги формально запланированы в госпрограмме, но не привязаны ни к контракту, ни к платежу.</p>
     <div class="tbl-wrap" style="max-height:220px">
       <table class="full">
-        <thead><tr><th>Школа</th><th class="r">СГ</th><th class="r">Лимит без обязательств, млн ₽</th></tr></thead>
+        <thead><tr><th>Школа</th><th class="r">СГ</th><th class="r" title="Лимит без обязательств, млн ₽">ЛБО, млн ₽</th></tr></thead>
         <tbody id="unbackedTbl"></tbody>
       </table>
     </div>
@@ -1032,7 +1032,7 @@ DASHBOARD_BODY = r"""
 
   <p class="note" style="margin-top:14px"><strong>Лимит по годам (госпрограмма), млн ₽</strong> — план по годам может не совпадать с суммой контракта: контракт заключается на часть лимита, остальное — лимит без обязательств.</p>
   <table class="mini">
-    <thead><tr><th>Год</th><th class="r">План</th><th class="r">Обязательства</th><th class="r">Факт</th><th class="r">Без обязательств</th></tr></thead>
+    <thead><tr><th>Год</th><th class="r">План</th><th class="r">Обязательства</th><th class="r">Факт</th><th class="r" title="Лимит без обязательств — план, под который ещё не заключён контракт">ЛБО</th></tr></thead>
     <tbody id="programYearsTbl"></tbody>
   </table>
   <p class="note" id="budgetMismatchNote" style="margin-top:8px;font-weight:600"></p>
