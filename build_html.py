@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Generate index.html from Schools xlsx data."""
+import base64
 import json
 import math
 import re
@@ -12,6 +13,15 @@ import openpyxl
 ROOT = Path(__file__).parent
 DATA_DIR = ROOT / "data"
 RAW_DIR = DATA_DIR / "raw"
+CKS_LOGO_B64 = base64.b64encode((ROOT / "assets" / "cks-logo.png").read_bytes()).decode("ascii")
+
+# Lucide alert-triangle, stroke 1.5px — брендбук ЦКС запрещает emoji в роли иконок.
+ICON_WARN = (
+    '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+    'stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" '
+    'style="vertical-align:-2px;margin-right:2px"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/>'
+    '<path d="M12 9v4"/><path d="M12 17h.01"/></svg>'
+)
 
 ADVANCE_PCTS = {30.0, 49.0}  # типовые проценты аванса, а не расчётный факт оплаты
 
@@ -801,6 +811,7 @@ HEAD_STYLE = r"""<!DOCTYPE html>
     background:linear-gradient(135deg, hsl(200,60%,23%), hsl(188,70%,30%));
     -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; display:inline-block }
   .sub { color:var(--muted); margin:0 0 20px; font-size:.92rem }
+  .brand { display:block; height:34px; margin-bottom:14px }
   ul.brief { margin:0; padding-left:1.2rem; color:var(--muted) }
   ul.brief li { margin:6px 0 }
   .kpis { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin:16px 0 }
@@ -834,15 +845,24 @@ HEAD_STYLE = r"""<!DOCTYPE html>
   .flag { font-size:.72rem; padding:2px 7px; margin:1px 2px 1px 0; display:inline-block; background:var(--warn-bg); border:1px solid #EFCB84; border-radius:5px; color:#8A5E10 }
   .flag.warn { background:var(--err-bg); border-color:#F0B3B3; color:#A32E2E }
   .pill { display:inline-block; font-size:.72rem; font-weight:600; padding:2px 9px; border-radius:99px }
+  .pill.ok, .pill.warn, .pill.err { display:inline-flex; align-items:center; gap:5px }
+  .pill.ok::before, .pill.warn::before, .pill.err::before { content:''; width:6px; height:6px; border-radius:50%; flex:none }
   .pill.ok { background:var(--ok-bg); color:#1E8449 }
+  .pill.ok::before { background:#1E8449 }
   .pill.warn { background:var(--warn-bg); color:#8A5E10 }
+  .pill.warn::before { background:#8A5E10 }
   .pill.err { background:var(--err-bg); color:#A32E2E }
+  .pill.err::before { background:#A32E2E }
   .stub-label { display:inline-block; font-size:.7rem; font-weight:600; letter-spacing:.03em; text-transform:uppercase; color:var(--faint); background:#F7FAFC; border:1px solid var(--line); border-radius:5px; padding:2px 8px }
   .kpis.four { grid-template-columns:repeat(4,1fr) }
   @media(max-width:900px) { .kpis.four { grid-template-columns:repeat(2,1fr) } }
   @media(max-width:700px) { .kpis,.kpis.four { grid-template-columns:1fr } }
   .navlink { display:inline-block; margin:0 0 16px; font-size:.85rem; color:var(--accent-d); text-decoration:none; font-weight:600 }
   .navlink:hover { text-decoration:underline }
+  .tabbar { display:flex; gap:4px; border-bottom:2px solid var(--line); margin:18px 0 20px }
+  .tabbtn { font:inherit; font-size:.95rem; font-weight:700; padding:10px 18px 12px; border:none; border-bottom:3px solid transparent; background:none; color:var(--muted); cursor:pointer; margin-bottom:-2px }
+  .tabbtn:hover { color:var(--accent-d) }
+  .tabbtn.active { color:var(--accent-d); border-bottom-color:var(--accent) }
   .filterbar { display:flex; gap:8px; flex-wrap:wrap; margin:12px 0 18px }
   .fbtn { font:inherit; font-size:.82rem; font-weight:600; padding:7px 14px; border-radius:99px; border:1px solid var(--line); background:var(--surface); color:var(--muted); cursor:pointer }
   .fbtn:hover { border-color:var(--accent) }
@@ -858,6 +878,7 @@ HEAD_STYLE = r"""<!DOCTYPE html>
 </head>
 <body>
 <div class="wrap">
+  <img class="brand" src="data:image/png;base64,__CKS_LOGO__" alt="ЦКС — Центр компетенций строительства">
   <h1>СГ и выплаты</h1>
   <p class="sub">__SUB__</p>
   __NAV__
@@ -884,7 +905,7 @@ METHOD_BODY = r"""
     <strong style="display:block;margin-top:20px;font-size:1.05rem">3. Нулевое освоение решается на этой неделе, не в декабре</strong>
     <p class="note"><span id="mth0"></span> школ — 0% кассового исполнения бюджета 2026 года при уже утверждённом финансировании (89–418 млн ₽ на объект). Ждать конца года бессмысленно: либо деньги начинают двигаться в ближайший месяц, либо бюджет надо честно переносить на 2027-й — и это решение нужно принять сейчас.</p>
     <div class="box" style="background:var(--err-bg);border-color:#F0B3B3;margin:8px 0 0">
-      <strong style="display:block;margin-bottom:6px;color:#A32E2E">⚠ <span id="k6"></span> школ: бюджет утверждён, выплат в 2026 году не было</strong>
+      <strong style="display:block;margin-bottom:6px;color:#A32E2E">__ICON_WARN__<span id="k6"></span> школ: бюджет утверждён, выплат в 2026 году не было</strong>
       <p class="note" style="margin:0 0 8px">Строительство почти завершено (готовность 80–100%), кассовых выплат за год — 0%.</p>
       <table>
         <thead><tr><th>Школа</th><th class="r">СГ</th><th class="r">План 2026, млн ₽</th></tr></thead>
@@ -979,73 +1000,84 @@ DASHBOARD_BODY = r"""
     <div class="kpi"><div class="n" id="dK4"></div><div class="l">0% освоения бюджета 2026</div></div>
   </div>
 
-  <div class="filterbar" id="filterBar">
-    <button class="fbtn active" data-f="all">Все объекты</button>
-    <button class="fbtn" data-f="credit">Подрядчик кредитует &gt;100 млн ₽</button>
-    <button class="fbtn" data-f="balanced">Баланс</button>
-    <button class="fbtn" data-f="nobudget">0% освоения 2026</button>
-    <button class="fbtn" data-f="expfail">Экспертиза отклонена/на пересмотре</button>
-    <button class="fbtn" data-f="urgent">Просрочен сильнее типового + кредитует</button>
+  <div class="tabbar" id="tabBar">
+    <button class="tabbtn active" data-tab="objects">Объекты</button>
+    <button class="tabbtn" data-tab="contractors">Подрядчики и риск</button>
+    <button class="tabbtn" data-tab="one">Один объект</button>
   </div>
 
-  <strong style="display:block;margin:18px 0 4px">Матрица риска: готовность vs оплата</strong>
-  <p class="note" style="margin-top:0">Каждая точка — школа: по X — стройготовность, по Y — % оплаты по контракту. Пунктирная диагональ — оплата точно по готовности; полоса ±10 п.п. вокруг неё — тот же порог, что делит статусы в таблице ниже. Клик по точке — график этой школы.</p>
-  <div class="chart" style="height:420px"><canvas id="cMatrix"></canvas></div>
+  <div class="tabpanel" data-tab="objects">
+    <div class="filterbar" id="filterBar">
+      <button class="fbtn active" data-f="all">Все объекты</button>
+      <button class="fbtn" data-f="credit">Подрядчик кредитует &gt;100 млн ₽</button>
+      <button class="fbtn" data-f="balanced">Баланс</button>
+      <button class="fbtn" data-f="nobudget">0% освоения 2026</button>
+      <button class="fbtn" data-f="expfail">Экспертиза отклонена/на пересмотре</button>
+      <button class="fbtn" data-f="urgent">Просрочен сильнее типового + кредитует</button>
+    </div>
 
-  <div class="tbl-wrap" style="max-height:520px">
-    <table class="full">
-      <thead><tr>
-        <th>Школа</th><th>Округ</th><th>Подрядчик</th><th>РП</th><th class="r">Контракт, млн ₽</th>
-        <th class="r">СГ</th><th class="r">Оплата</th><th class="r">Разница, млн ₽</th><th>Статус</th><th>Ввод</th><th class="r">Экспертиза</th>
-      </tr></thead>
-      <tbody id="objTbl"></tbody>
+    <strong style="display:block;margin:18px 0 4px">Матрица риска: готовность vs оплата</strong>
+    <p class="note" style="margin-top:0">Каждая точка — школа: по X — стройготовность, по Y — % оплаты по контракту. Пунктирная диагональ — оплата точно по готовности; полоса ±10 п.п. вокруг неё — тот же порог, что делит статусы в таблице ниже. Клик по точке — график этой школы (вкладка «Один объект»).</p>
+    <div class="chart" style="height:420px"><canvas id="cMatrix"></canvas></div>
+
+    <div class="tbl-wrap" style="max-height:520px">
+      <table class="full">
+        <thead><tr>
+          <th>Школа</th><th>Округ</th><th>Подрядчик</th><th>РП</th><th class="r">Контракт, млн ₽</th>
+          <th class="r">СГ</th><th class="r">Оплата</th><th class="r">Разница, млн ₽</th><th>Статус</th><th>Ввод</th><th class="r">Экспертиза</th>
+        </tr></thead>
+        <tbody id="objTbl"></tbody>
+      </table>
+    </div>
+    <p class="note">Клик по строке — график этого объекта на вкладке «Один объект». Разница = оплата% минус СГ% × сумма контракта.</p>
+  </div>
+
+  <div class="tabpanel" data-tab="contractors" hidden>
+    <strong style="display:block;margin-top:4px;margin-bottom:8px">Подрядчики — сводно по портфелю</strong>
+    <p class="note" style="margin-top:0">Клик по подрядчику — отфильтровать вкладку «Объекты» только по его объектам.</p>
+    <div class="tbl-wrap">
+      <table class="full">
+        <thead><tr>
+          <th>Подрядчик</th><th class="r">Объектов</th><th class="r">Контракт, млн ₽</th>
+          <th class="r">Подрядчик кредитует, млн ₽</th><th class="r">Не осваивают бюджет 2026</th>
+        </tr></thead>
+        <tbody id="contrRollup"></tbody>
+      </table>
+    </div>
+
+    <strong style="display:block;margin-top:22px;margin-bottom:8px">Концентрация денежного риска</strong>
+    <p class="note" style="margin-top:0">Топ объектов по сумме, которую за них уже доплатил подрядчик (среди тех, кто «кредитует» стройку), с накопленной долей от всей такой суммы по портфелю.</p>
+    <div class="tbl-wrap" style="max-height:280px">
+      <table class="full">
+        <thead><tr><th>Школа</th><th class="r">Подрядчик доплатил, млн ₽</th><th class="r">Накопленная доля</th></tr></thead>
+        <tbody id="paretoTbl"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="tabpanel" data-tab="one" hidden>
+    <div class="row">
+      <select id="selSchool"></select>
+      <span class="tag" id="tagR"></span>
+      <span class="note" id="metaSchool" style="margin:0"></span>
+    </div>
+    <div class="chart"><canvas id="cTraj"></canvas></div>
+    <p class="note" id="ktLine"></p>
+    <p class="note">Синяя — факт, пунктир — план, зелёная — % от суммы контракта, уже выплаченной на эту дату.</p>
+
+    <p class="note" style="margin-top:14px"><strong>Лимит по годам (госпрограмма), млн ₽</strong> — план по годам может не совпадать с суммой контракта: контракт заключается на часть лимита, остальное — лимит без обязательств.</p>
+    <table class="mini">
+      <thead><tr><th>Год</th><th class="r">План</th><th class="r">Обязательства</th><th class="r">Факт</th><th class="r" title="Лимит без обязательств — план, под который ещё не заключён контракт">ЛБО</th></tr></thead>
+      <tbody id="programYearsTbl"></tbody>
+    </table>
+    <p class="note" id="budgetMismatchNote" style="margin-top:8px;font-weight:600"></p>
+
+    <p class="note" style="margin-top:14px"><strong>Платежи по годам: аванс vs исполнение, млн ₽</strong> — из фактической истории платежей объекта, а не из плана.</p>
+    <table class="mini">
+      <thead><tr><th>Год</th><th class="r">Аванс</th><th class="r">По актам</th></tr></thead>
+      <tbody id="payYearsTbl"></tbody>
     </table>
   </div>
-  <p class="note">Клик по строке — график этого объекта ниже. Разница = оплата% минус СГ% × сумма контракта.</p>
-
-  <strong style="display:block;margin-top:22px;margin-bottom:8px">Подрядчики — сводно по портфелю</strong>
-  <p class="note" style="margin-top:0">Клик по подрядчику — отфильтровать таблицу выше только по его объектам.</p>
-  <div class="tbl-wrap">
-    <table class="full">
-      <thead><tr>
-        <th>Подрядчик</th><th class="r">Объектов</th><th class="r">Контракт, млн ₽</th>
-        <th class="r">Подрядчик кредитует, млн ₽</th><th class="r">Не осваивают бюджет 2026</th>
-      </tr></thead>
-      <tbody id="contrRollup"></tbody>
-    </table>
-  </div>
-
-  <strong style="display:block;margin-top:22px;margin-bottom:8px">Концентрация денежного риска</strong>
-  <p class="note" style="margin-top:0">Топ объектов по сумме, которую за них уже доплатил подрядчик (среди тех, кто «кредитует» стройку), с накопленной долей от всей такой суммы по портфелю.</p>
-  <div class="tbl-wrap" style="max-height:280px">
-    <table class="full">
-      <thead><tr><th>Школа</th><th class="r">Подрядчик доплатил, млн ₽</th><th class="r">Накопленная доля</th></tr></thead>
-      <tbody id="paretoTbl"></tbody>
-    </table>
-  </div>
-
-  <strong style="display:block;margin-top:22px;margin-bottom:8px">Один объект</strong>
-  <div class="row">
-    <select id="selSchool"></select>
-    <span class="tag" id="tagR"></span>
-    <span class="note" id="metaSchool" style="margin:0"></span>
-  </div>
-  <div class="chart"><canvas id="cTraj"></canvas></div>
-  <p class="note" id="ktLine"></p>
-  <p class="note">Синяя — факт, пунктир — план, зелёная — % от суммы контракта, уже выплаченной на эту дату.</p>
-
-  <p class="note" style="margin-top:14px"><strong>Лимит по годам (госпрограмма), млн ₽</strong> — план по годам может не совпадать с суммой контракта: контракт заключается на часть лимита, остальное — лимит без обязательств.</p>
-  <table class="mini">
-    <thead><tr><th>Год</th><th class="r">План</th><th class="r">Обязательства</th><th class="r">Факт</th><th class="r" title="Лимит без обязательств — план, под который ещё не заключён контракт">ЛБО</th></tr></thead>
-    <tbody id="programYearsTbl"></tbody>
-  </table>
-  <p class="note" id="budgetMismatchNote" style="margin-top:8px;font-weight:600"></p>
-
-  <p class="note" style="margin-top:14px"><strong>Платежи по годам: аванс vs исполнение, млн ₽</strong> — из фактической истории платежей объекта, а не из плана.</p>
-  <table class="mini">
-    <thead><tr><th>Год</th><th class="r">Аванс</th><th class="r">По актам</th></tr></thead>
-    <tbody id="payYearsTbl"></tbody>
-  </table>
 """
 
 DASHBOARD_SCRIPT = r"""</div>
@@ -1092,7 +1124,7 @@ function renderObjTbl() {
       `<td class="r">${o.contract_value??'—'}</td><td class="r">${o.sg}%</td><td class="r">${o.pct??'—'}%</td>` +
       `<td class="r">${moneyCell(o.gap_rub)}</td><td><span class="pill ${STATUS_PILL[o.money_status]}">${STATUS_LABEL[o.money_status]}</span></td><td>${overdue}</td><td class="r">${overrun}</td></tr>`;
   }).join('');
-  document.querySelectorAll('#objTbl tr.clickable').forEach(tr => tr.onclick = () => { sel.value = tr.dataset.uin; drawTraj(tr.dataset.uin); });
+  document.querySelectorAll('#objTbl tr.clickable').forEach(tr => tr.onclick = () => { sel.value = tr.dataset.uin; drawTraj(tr.dataset.uin); switchTab('one'); });
 }
 
 document.querySelectorAll('#filterBar .fbtn').forEach(btn => btn.onclick = () => {
@@ -1117,7 +1149,7 @@ function renderRollup() {
   ).join('');
   document.querySelectorAll('#contrRollup tr.clickable').forEach(tr => tr.onclick = () => {
     activeContractor = activeContractor===tr.dataset.c ? null : tr.dataset.c;
-    renderRollup(); renderObjTbl(); renderMatrix();
+    renderRollup(); renderObjTbl(); renderMatrix(); switchTab('objects');
   });
 }
 
@@ -1163,8 +1195,7 @@ function renderMatrix() {
       onClick: (evt, els) => {
         if (!els.length) return;
         const ds = matrixDatasets[els[0].datasetIndex], pt = ds.data[els[0].index];
-        sel.value = pt.uin; drawTraj(pt.uin);
-        document.getElementById('selSchool').scrollIntoView({ behavior: 'smooth', block: 'center' });
+        sel.value = pt.uin; drawTraj(pt.uin); switchTab('one');
       },
       plugins: {
         legend: { position: 'bottom', labels: { boxWidth: 12, usePointStyle: true } },
@@ -1234,13 +1265,23 @@ function drawTraj(uin) {
   const bm = obj ? obj.budget_mismatch : null;
   const bmEl = document.getElementById('budgetMismatchNote');
   if (bm==null) { bmEl.textContent = ''; }
-  else if (bm < -20) { bmEl.innerHTML = `⚠ Похоже, не хватает денег: физической работы осталось больше, чем запланировано в бюджете на этот и следующие годы — дефицит ≈ ${Math.abs(Math.round(bm))} млн ₽. Надо думать, откуда доставить.`; bmEl.style.color = '#A32E2E'; }
+  else if (bm < -20) { bmEl.innerHTML = `__ICON_WARN__Похоже, не хватает денег: физической работы осталось больше, чем запланировано в бюджете на этот и следующие годы — дефицит ≈ ${Math.abs(Math.round(bm))} млн ₽. Надо думать, откуда доставить.`; bmEl.style.color = '#A32E2E'; }
   else if (bm > 50) { bmEl.innerHTML = `План по годам заметно больше, чем нужно на остаток работ (запас ≈ ${Math.round(bm)} млн ₽) — можно снять и перекинуть на другой объект.`; bmEl.style.color = '#8A5E10'; }
   else { bmEl.innerHTML = `План по годам примерно соответствует остатку работ.`; bmEl.style.color = '#1E8449'; }
 }
 sel.onchange = e => drawTraj(e.target.value);
 
 drawTraj(sel.value);
+
+// Вкладки. Графики Chart.js, созданные в скрытой (hidden) панели, считают её нулевого
+// размера и остаются пустыми — при первом показе панели пересчитываем размер явно.
+function switchTab(tab) {
+  document.querySelectorAll('.tabbtn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  document.querySelectorAll('.tabpanel').forEach(p => p.hidden = p.dataset.tab !== tab);
+  if (tab === 'objects' && chartMatrix) chartMatrix.resize();
+  if (tab === 'one' && chartTraj) chartTraj.resize();
+}
+document.querySelectorAll('.tabbtn').forEach(btn => btn.onclick = () => switchTab(btn.dataset.tab));
 </script>
 </body>
 </html>
@@ -1345,17 +1386,19 @@ def main():
         .replace("__SUB__", sub + " — методика управления финансированием портфеля")
         .replace("__NAV__", '<a class="navlink" href="dashboard.html">→ Дашборд по объектам</a>')
         .replace("__WRAP__", "880")
+        .replace("__CKS_LOGO__", CKS_LOGO_B64)
         + METHOD_BODY
         + METHOD_SCRIPT.replace("__DATA__", data_json)
-    )
+    ).replace("__ICON_WARN__", ICON_WARN)
     dashboard_html = (
         HEAD_STYLE.replace("__TITLE__", "СГ и выплаты — дашборд")
         .replace("__SUB__", sub + " — объекты, подрядчики, деньги против готовности")
         .replace("__NAV__", '<a class="navlink" href="index.html">→ Методика и выводы</a>')
         .replace("__WRAP__", "1440")
+        .replace("__CKS_LOGO__", CKS_LOGO_B64)
         + DASHBOARD_BODY
         + DASHBOARD_SCRIPT.replace("__DATA__", data_json)
-    )
+    ).replace("__ICON_WARN__", ICON_WARN)
 
     out = ROOT / "index.html"
     out.write_text(method_html, encoding="utf-8")
