@@ -988,6 +988,10 @@ DASHBOARD_BODY = r"""
     <button class="fbtn" data-f="urgent">Просрочен сильнее типового + кредитует</button>
   </div>
 
+  <strong style="display:block;margin:18px 0 4px">Матрица риска: готовность vs оплата</strong>
+  <p class="note" style="margin-top:0">Каждая точка — школа: по X — стройготовность, по Y — % оплаты по контракту. Пунктирная диагональ — оплата точно по готовности; полоса ±10 п.п. вокруг неё — тот же порог, что делит статусы в таблице ниже. Клик по точке — график этой школы.</p>
+  <div class="chart" style="height:420px"><canvas id="cMatrix"></canvas></div>
+
   <div class="tbl-wrap" style="max-height:520px">
     <table class="full">
       <thead><tr>
@@ -1095,7 +1099,7 @@ document.querySelectorAll('#filterBar .fbtn').forEach(btn => btn.onclick = () =>
   document.querySelectorAll('#filterBar .fbtn').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
   activeFilter = btn.dataset.f;
-  renderObjTbl();
+  renderObjTbl(); renderMatrix();
 });
 
 function renderRollup() {
@@ -1113,7 +1117,7 @@ function renderRollup() {
   ).join('');
   document.querySelectorAll('#contrRollup tr.clickable').forEach(tr => tr.onclick = () => {
     activeContractor = activeContractor===tr.dataset.c ? null : tr.dataset.c;
-    renderRollup(); renderObjTbl();
+    renderRollup(); renderObjTbl(); renderMatrix();
   });
 }
 
@@ -1122,6 +1126,71 @@ renderRollup();
 document.getElementById('paretoTbl').innerHTML = DATA.pareto.map(o =>
   `<tr><td title="${o.full}">${o.name}</td><td class="r">${moneyCell(-o.gap_rub)}</td><td class="r">${o.cum_pct}%</td></tr>`
 ).join('');
+
+// Матрица риска: та же классификация money_status (гэп % оплаты минус % готовности,
+// порог ±10 п.п.), что и в таблице объектов и в STATUS_PILL — просто как точки, а не строки.
+// Подчиняется тому же фильтру (activeFilter/activeContractor), что и таблица — один срез
+// для всех визуализаций на странице.
+const MATRIX_STATUS = {
+  over:     { label: 'Избыток оплаты (оплата выше готовности)', color: '#D94040', shape: 'triangle' },
+  credit:   { label: 'Кредитует подрядчик (готовность выше оплаты)', color: '#E8A020', shape: 'rect' },
+  balanced: { label: 'Баланс (±10 п.п.)', color: '#27AE60', shape: 'circle' },
+  unknown:  { label: 'Нет данных по оплате', color: '#93A8BC', shape: 'circle' },
+};
+let chartMatrix, matrixDatasets;
+function renderMatrix() {
+  const matrixObjs = DATA.objects.filter(o => o.pct != null && passesFilter(o));
+  matrixDatasets = Object.keys(MATRIX_STATUS).map(status => {
+    const cfg = MATRIX_STATUS[status];
+    const pts = matrixObjs.filter(o => o.money_status === status);
+    return {
+      label: cfg.label,
+      data: pts.map(o => ({ x: o.sg, y: o.pct, uin: o.uin, name: o.name, full: o.full })),
+      backgroundColor: cfg.color,
+      borderColor: '#fff',
+      borderWidth: 2,
+      pointStyle: cfg.shape,
+      pointRadius: 6,
+      pointHoverRadius: 8,
+    };
+  }).filter(ds => ds.data.length);
+  if (chartMatrix) chartMatrix.destroy();
+  chartMatrix = new Chart(document.getElementById('cMatrix'), {
+    type: 'scatter',
+    data: { datasets: matrixDatasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      onClick: (evt, els) => {
+        if (!els.length) return;
+        const ds = matrixDatasets[els[0].datasetIndex], pt = ds.data[els[0].index];
+        sel.value = pt.uin; drawTraj(pt.uin);
+        document.getElementById('selSchool').scrollIntoView({ behavior: 'smooth', block: 'center' });
+      },
+      plugins: {
+        legend: { position: 'bottom', labels: { boxWidth: 12, usePointStyle: true } },
+        datalabels: { display: false },
+        tooltip: {
+          callbacks: {
+            title: items => items[0].raw.full,
+            label: item => `Готовность ${item.raw.x}%, оплата ${item.raw.y}%`,
+          },
+        },
+        annotation: {
+          annotations: {
+            diagLine: { type: 'line', xMin: 0, yMin: 0, xMax: 100, yMax: 100, borderColor: '#5A7189', borderWidth: 1, borderDash: [4, 4] },
+            diagOver: { type: 'line', xMin: 0, yMin: 10, xMax: 90, yMax: 100, borderColor: '#93A8BC', borderWidth: 1, borderDash: [2, 3] },
+            diagCredit: { type: 'line', xMin: 10, yMin: 0, xMax: 100, yMax: 90, borderColor: '#93A8BC', borderWidth: 1, borderDash: [2, 3] },
+          },
+        },
+      },
+      scales: {
+        x: { min: 0, max: 100, title: { display: true, text: 'Стройготовность, %' } },
+        y: { min: 0, max: 100, title: { display: true, text: 'Оплата по контракту, %' } },
+      },
+    },
+  });
+}
+renderMatrix();
 
 const sel = document.getElementById('selSchool');
 DATA.objects.forEach(o=>{
