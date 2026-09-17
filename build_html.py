@@ -591,7 +591,7 @@ def load_data():
         if pir_info.get("exp_last_result") == "Отрицательное":
             flags.append("экспертиза отклонена")
         elif pir_info.get("exp_pending"):
-            flags.append("экспертиза на пересмотре")
+            flags.append("в экспертизе")
 
         # Положительное заключение экспертизы подтверждает только техчасть (ОПД) — смета (СД)
         # заключается отдельно и может отставать. Подтверждаем СД по Simple List: если там
@@ -1056,10 +1056,10 @@ METHOD_BODY = r"""
     </div>
 
     <strong style="display:block;margin-top:20px;font-size:1.05rem">7. У <span id="expFailedN"></span> школ экспертиза не пройдена — вот куда смотреть, почему стоят деньги</strong>
-    <p class="note">Появился источник, которого не было раньше (выгрузка ПИР): по каждой заявке на экспертизу видно её реальный результат и историю. У части школ последнее полученное заключение — «Отрицательное», у части сейчас открыта незакрытая заявка («на пересмотре» — стадия вроде устранения замечаний или рассмотрения ПД, итогового заключения ещё нет). Больше половины этих школ уже были в красной зоне или списке нулевого освоения выше — это, похоже, и есть причина, а не совпадение.</p>
+    <p class="note">Появился источник, которого не было раньше (выгрузка ПИР): по каждой заявке на экспертизу видно её реальный результат и историю. У части школ последнее полученное заключение — «Отрицательное», у части заявка ещё открыта («в экспертизе» — замечания, рассмотрение ПД и т.п., итогового заключения нет). Больше половины этих школ уже были в красной зоне или списке нулевого освоения выше — это, похоже, и есть причина, а не совпадение.</p>
     <div class="tbl-wrap" style="max-height:280px">
       <table class="full">
-        <thead><tr><th>Школа</th><th class="r">СГ</th><th>Результат экспертизы</th><th>Дата</th><th>Сейчас на пересмотре</th></tr></thead>
+        <thead><tr><th>Школа</th><th class="r">СГ</th><th>Результат экспертизы</th><th>Дата</th><th>Сейчас в экспертизе</th></tr></thead>
         <tbody id="expFailedTbl"></tbody>
       </table>
     </div>
@@ -1132,7 +1132,7 @@ DASHBOARD_BODY = r"""
       <button class="fbtn" data-f="credit">Подрядчик кредитует &gt;100 млн ₽</button>
       <button class="fbtn" data-f="balanced">Баланс</button>
       <button class="fbtn" data-f="nobudget">0% освоения 2026</button>
-      <button class="fbtn" data-f="expfail">Экспертиза: отклонена / на пересмотре</button>
+      <button class="fbtn" data-f="expfail">Экспертиза: отклонена / в экспертизе</button>
       <button class="fbtn" data-f="urgent">Просрочен сильнее типового + кредитует</button>
       <button class="fbtn" data-f="advance">Типовой аванс</button>
       <button class="fbtn" data-f="priority">Топ приоритет</button>
@@ -1158,7 +1158,7 @@ DASHBOARD_BODY = r"""
         <tbody id="objTbl"></tbody>
       </table>
     </div>
-    <p class="note">Таблица по убыванию приоритета. Приоритет = сколько подрядчик кредитует (млн) × срочность (просрочка, 0% бюджета) × вес объекта у этого подрядчика. Клик по строке — вкладка «Один объект». В колонке экспертизы: <span class="pill ok">ТЧ</span> техчасть ок, <span class="pill err">СД</span> смета не согласована, <span class="pill warn">на пересмотре</span> — заявка в экспертизе ещё открыта (замечания / рассмотрение), заключения нет.</p>
+    <p class="note">Таблица по убыванию приоритета. Приоритет = сколько подрядчик кредитует (млн) × срочность (просрочка, 0% бюджета) × вес объекта у этого подрядчика. Клик по строке — вкладка «Один объект». В колонке экспертизы: <span class="pill ok">ТЧ</span> техчасть ок, <span class="pill err">СД</span> смета не согласована, <span class="pill warn">в экспертизе</span> — заявка ещё открыта, заключения нет.</p>
   </div>
 
   <div class="tabpanel" data-tab="contractors" hidden>
@@ -1247,7 +1247,7 @@ function renderObjTbl() {
     if (o.exp_last_result==='Отрицательное') {
       overrun = '<span class="pill-pair"><span class="pill err" title="Отрицательное заключение">ТЧ−</span></span>';
     } else if (o.exp_pending) {
-      overrun = '<span class="pill-pair"><span class="pill warn" title="Заявка в экспертизе не закрыта: замечания, рассмотрение ПД и т.п.">на пересмотре</span></span>';
+      overrun = '<span class="pill-pair"><span class="pill warn" title="Заявка ещё открыта: замечания, рассмотрение ПД и т.п.">в экспертизе</span></span>';
     } else if (o.exp_last_result==='Положительное' && !o.sd_confirmed) {
       overrun = '<span class="pill-pair"><span class="pill ok" title="Техчасть (ОПД) — положительное заключение">ТЧ</span><span class="pill err" title="Смета не согласована: нет согласованной стоимости в Акцент">СД</span></span>';
     } else if (o.exp_last_result==='Положительное' && o.sd_confirmed) {
