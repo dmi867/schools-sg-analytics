@@ -1159,7 +1159,7 @@ DASHBOARD_BODY = r"""
       <button type="button" class="fbtn" id="btnPlayPath">Динамика</button>
       <span class="note" id="matrixPlayLabel" style="margin:0"></span>
     </div>
-    <div class="chart" style="height:420px"><canvas id="cMatrix"></canvas></div>
+    <div class="chart" style="height:520px"><canvas id="cMatrix"></canvas></div>
 
     <div class="tbl-wrap" style="max-height:520px">
       <table class="full">
