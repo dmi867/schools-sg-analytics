@@ -1153,7 +1153,7 @@ DASHBOARD_BODY = r"""
     </div>
 
     <strong style="display:block;margin:18px 0 4px">Матрица риска: готовность vs оплата</strong>
-    <p class="note" style="margin-top:0">Точка — школа сейчас. Выберите школу и нажмите «Динамика» — кружок пробежит по её истории (куда шла готовность и оплата). Клик по точке тоже выбирает школу.</p>
+    <p class="note" style="margin-top:0">Снизу — оплата, слева — стройготовность. Точка — школа сейчас. Выберите школу и нажмите «Динамика» — кружок пробежит по её истории. Клик по точке тоже выбирает школу.</p>
     <div class="row" style="margin:8px 0 4px">
       <select id="selMatrixSchool" style="min-width:220px"></select>
       <button type="button" class="fbtn" id="btnPlayPath">Динамика</button>
@@ -1180,7 +1180,7 @@ DASHBOARD_BODY = r"""
 
   <div class="tabpanel" data-tab="contractors" hidden>
     <strong style="display:block;margin-top:4px;margin-bottom:8px">Подрядчики: кто кредитует стройку</strong>
-    <p class="note" style="margin-top:0">«Кредитует стройку» — сколько млн ₽ готовности уже есть сверх оплаты (подрядчик строит на свои). «Доля риска» — какая часть всего такого недоплаты по портфелю приходится на этого подрядчика. Клик по строке — его объекты на вкладке «Объекты».</p>
+    <p class="note" style="margin-top:0">«Кредитует» — сколько млн ₽ уже построено, а денег подрядчику ещё не заплатили. «Доля риска» — какой процент этой суммы у него. Клик по строке — его школы.</p>
     <div class="tbl-wrap">
       <table class="full">
         <thead><tr>
@@ -1368,7 +1368,7 @@ function setPlaySchool(uin, rebuild) {
 function applyPlayOverlay(datasets) {
   const path = pathFor(playUin);
   if (path.length < 1) return datasets;
-  const trail = path.slice(0, playIdx + 1).map(p => ({ x: p.sg, y: p.pay }));
+  const trail = path.slice(0, playIdx + 1).map(p => ({ x: p.pay, y: p.sg }));
   datasets.push({
     label: 'Траектория',
     data: trail,
@@ -1383,7 +1383,7 @@ function applyPlayOverlay(datasets) {
   const cur = path[Math.min(playIdx, path.length - 1)];
   datasets.push({
     label: 'Движение',
-    data: [{ x: cur.sg, y: cur.pay, d: cur.d }],
+    data: [{ x: cur.pay, y: cur.sg, d: cur.d }],
     backgroundColor: '#143260',
     borderColor: '#fff',
     borderWidth: 2,
@@ -1402,7 +1402,7 @@ function renderMatrix() {
     const pts = matrixObjs.filter(o => o.money_status === status);
     return {
       label: cfg.label,
-      data: pts.map(o => ({ x: o.sg, y: o.pct, uin: o.uin, name: o.name, full: o.full })),
+      data: pts.map(o => ({ x: o.pct, y: o.sg, uin: o.uin, name: o.name, full: o.full })),
       backgroundColor: cfg.color,
       borderColor: '#fff',
       borderWidth: 2,
@@ -1433,20 +1433,21 @@ function renderMatrix() {
         tooltip: {
           callbacks: {
             title: items => items[0].raw.full || items[0].raw.d || 'Точка',
-            label: item => `Готовность ${item.raw.x}%, оплата ${item.raw.y}%`,
+            label: item => `Оплата ${item.raw.x}%, готовность ${item.raw.y}%`,
           },
         },
         annotation: {
           annotations: {
             diagLine: { type: 'line', xMin: 0, yMin: 0, xMax: 100, yMax: 100, borderColor: '#5A7189', borderWidth: 1, borderDash: [4, 4] },
-            diagOver: { type: 'line', xMin: 0, yMin: 10, xMax: 90, yMax: 100, borderColor: '#93A8BC', borderWidth: 1, borderDash: [2, 3] },
-            diagCredit: { type: 'line', xMin: 10, yMin: 0, xMax: 100, yMax: 90, borderColor: '#93A8BC', borderWidth: 1, borderDash: [2, 3] },
+            // коридор ±10 п.п.: сверху СГ выше оплаты, снизу — оплата выше СГ
+            diagCredit: { type: 'line', xMin: 0, yMin: 10, xMax: 90, yMax: 100, borderColor: '#93A8BC', borderWidth: 1, borderDash: [2, 3] },
+            diagOver: { type: 'line', xMin: 10, yMin: 0, xMax: 100, yMax: 90, borderColor: '#93A8BC', borderWidth: 1, borderDash: [2, 3] },
           },
         },
       },
       scales: {
-        x: { min: 0, max: 100, title: { display: true, text: 'Стройготовность, %' } },
-        y: { min: 0, max: 100, title: { display: true, text: 'Оплата по контракту, %' } },
+        x: { min: 0, max: 100, title: { display: true, text: 'Оплата по контракту, %' } },
+        y: { min: 0, max: 100, title: { display: true, text: 'Стройготовность, %' } },
       },
     },
   });
