@@ -141,24 +141,16 @@
   </div>
 
   <div class="tabpanel" data-tab="contractors" hidden>
-    <strong style="display:block;margin-top:4px;margin-bottom:8px">Подрядчики — сводно по портфелю</strong>
-    <p class="note" style="margin-top:0">Клик по подрядчику — отфильтровать вкладку «Объекты» только по его объектам.</p>
+    <strong style="display:block;margin-top:4px;margin-bottom:8px">Подрядчики: кто кредитует стройку</strong>
+    <p class="note" style="margin-top:0">Сумма — сколько млн ₽ готовности уже «закрыто» без оплаты (подрядчик строит на свои). Строки по убыванию этой суммы. «Доля нарастающим» — сколько % всего такого риска по портфелю закрывают подрядчики сверху списка. Клик — фильтр объектов по этому подрядчику.</p>
     <div class="tbl-wrap">
       <table class="full">
         <thead><tr>
           <th>Подрядчик</th><th class="r">Объектов</th><th class="r">Контракт, млн ₽</th>
-          <th class="r">Подрядчик кредитует, млн ₽</th><th class="r">Не осваивают бюджет 2026</th>
+          <th class="r">Кредитует стройку, млн ₽</th><th class="r">Доля нарастающим</th>
+          <th class="r">Не осваивают 2026</th>
         </tr></thead>
         <tbody id="contrRollup"></tbody>
-      </table>
-    </div>
-
-    <strong style="display:block;margin-top:22px;margin-bottom:8px">Концентрация денежного риска</strong>
-    <p class="note" style="margin-top:0">Топ объектов по сумме, которую за них уже доплатил подрядчик (среди тех, кто «кредитует» стройку), с накопленной долей от всей такой суммы по портфелю.</p>
-    <div class="tbl-wrap" style="max-height:280px">
-      <table class="full">
-        <thead><tr><th>Школа</th><th class="r">Подрядчик доплатил, млн ₽</th><th class="r">Накопленная доля</th></tr></thead>
-        <tbody id="paretoTbl"></tbody>
       </table>
     </div>
   </div>
@@ -251,9 +243,15 @@ function renderRollup() {
     if (o.flags && o.flags.includes('не осваивает бюджет 2026')) e.no_budget2026++;
   });
   const rows = Object.values(byC).sort((a,b)=>b.credit-a.credit);
-  document.getElementById('contrRollup').innerHTML = rows.map(c =>
-    `<tr class="clickable${activeContractor===c.contractor?' row-active':''}" data-c="${c.contractor}"><td>${c.contractor}</td><td class="r">${c.n}</td><td class="r">${Math.round(c.contract)}</td><td class="r">${moneyCell(-Math.round(c.credit))}</td><td class="r">${c.no_budget2026||'—'}</td></tr>`
-  ).join('');
+  const totalCredit = rows.reduce((s,c)=>s+c.credit, 0);
+  let cum = 0;
+  document.getElementById('contrRollup').innerHTML = rows.map(c => {
+    cum += c.credit;
+    const cumPct = totalCredit > 0 && c.credit > 0 ? Math.round(cum / totalCredit * 1000) / 10 : null;
+    const creditTxt = c.credit > 0 ? Math.round(c.credit).toLocaleString('ru-RU') : '—';
+    const shareTxt = cumPct != null ? cumPct + '%' : '—';
+    return `<tr class="clickable${activeContractor===c.contractor?' row-active':''}" data-c="${c.contractor}"><td>${c.contractor}</td><td class="r">${c.n}</td><td class="r">${Math.round(c.contract)}</td><td class="r">${creditTxt}</td><td class="r">${shareTxt}</td><td class="r">${c.no_budget2026||'—'}</td></tr>`;
+  }).join('');
   document.querySelectorAll('#contrRollup tr.clickable').forEach(tr => tr.onclick = () => {
     activeContractor = activeContractor===tr.dataset.c ? null : tr.dataset.c;
     renderRollup(); renderObjTbl(); renderMatrix(); switchTab('objects');
@@ -262,9 +260,6 @@ function renderRollup() {
 
 renderObjTbl();
 renderRollup();
-document.getElementById('paretoTbl').innerHTML = DATA.pareto.map(o =>
-  `<tr><td title="${o.full}">${o.name}</td><td class="r">${moneyCell(-o.gap_rub)}</td><td class="r">${o.cum_pct}%</td></tr>`
-).join('');
 
 // Матрица риска: та же классификация money_status (гэп % оплаты минус % готовности,
 // порог ±10 п.п.), что и в таблице объектов и в STATUS_PILL — просто как точки, а не строки.
