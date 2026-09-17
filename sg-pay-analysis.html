@@ -66,6 +66,7 @@
   .pill.warn::before { background:#8A5E10 }
   .pill.err { background:var(--err-bg); color:#A32E2E }
   .pill.err::before { background:#A32E2E }
+  .pill-pair { display:inline-flex; gap:4px; flex-wrap:wrap; justify-content:flex-end }
   .stub-label { display:inline-block; font-size:.7rem; font-weight:600; letter-spacing:.03em; text-transform:uppercase; color:var(--faint); background:#EAF0F5; border:1px solid var(--line); border-radius:5px; padding:2px 8px }
   .stub-label.done { color:var(--accent-d); background:var(--accent-dim); border-color:var(--accent-l) }
   .box.done { border-color:var(--accent-l); background:#F3FBFC }
@@ -163,7 +164,7 @@
     </div>
 
     <strong style="display:block;margin-top:20px;font-size:1.05rem">7. У <span id="expFailedN"></span> школ экспертиза не пройдена — вот куда смотреть, почему стоят деньги</strong>
-    <p class="note">Появился источник, которого не было раньше (выгрузка ПИР): по каждой заявке на экспертизу видно её реальный результат и историю. У части школ последнее полученное заключение — «Отрицательное», у части сейчас открыта незакрытая заявка на пересмотр. Больше половины этих школ уже были в красной зоне или списке нулевого освоения выше — это, похоже, и есть причина, а не совпадение.</p>
+    <p class="note">Появился источник, которого не было раньше (выгрузка ПИР): по каждой заявке на экспертизу видно её реальный результат и историю. У части школ последнее полученное заключение — «Отрицательное», у части сейчас открыта незакрытая заявка («на пересмотре» — стадия вроде устранения замечаний или рассмотрения ПД, итогового заключения ещё нет). Больше половины этих школ уже были в красной зоне или списке нулевого освоения выше — это, похоже, и есть причина, а не совпадение.</p>
     <div class="tbl-wrap" style="max-height:280px">
       <table class="full">
         <thead><tr><th>Школа</th><th class="r">СГ</th><th>Результат экспертизы</th><th>Дата</th><th>Сейчас на пересмотре</th></tr></thead>
@@ -171,7 +172,7 @@
       </table>
     </div>
 
-    <p class="note">«Положительное» заключение закрывает только техническую часть — смета (СД) заключается отдельно и может отставать. Считаем смету подтверждённой, если по объекту в Simple List заполнена «Согласованная стоимость объекта экспертизы»; если её нет при общем результате «Положительное» — деньги по факту не согласованы. <span id="sdGapNote"></span></p>
+    <p class="note">«Положительное» заключение закрывает только <strong>техчасть (ТЧ)</strong>. <strong>Смета (СД)</strong> согласуется отдельно. На дашборде это два бейджа: зелёная ТЧ + красная СД, если сметы ещё нет. Смету считаем подтверждённой, если в Simple List заполнена «Согласованная стоимость объекта экспертизы». <span id="sdGapNote"></span></p>
 
     <strong style="display:block;margin-top:20px;font-size:1.05rem">Данных не хватает — заглушки вместо разделов</strong>
     <div class="box stub">

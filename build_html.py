@@ -956,6 +956,7 @@ HEAD_STYLE = r"""<!DOCTYPE html>
   .pill.warn::before { background:#8A5E10 }
   .pill.err { background:var(--err-bg); color:#A32E2E }
   .pill.err::before { background:#A32E2E }
+  .pill-pair { display:inline-flex; gap:4px; flex-wrap:wrap; justify-content:flex-end }
   .stub-label { display:inline-block; font-size:.7rem; font-weight:600; letter-spacing:.03em; text-transform:uppercase; color:var(--faint); background:#EAF0F5; border:1px solid var(--line); border-radius:5px; padding:2px 8px }
   .stub-label.done { color:var(--accent-d); background:var(--accent-dim); border-color:var(--accent-l) }
   .box.done { border-color:var(--accent-l); background:#F3FBFC }
@@ -1055,7 +1056,7 @@ METHOD_BODY = r"""
     </div>
 
     <strong style="display:block;margin-top:20px;font-size:1.05rem">7. У <span id="expFailedN"></span> школ экспертиза не пройдена — вот куда смотреть, почему стоят деньги</strong>
-    <p class="note">Появился источник, которого не было раньше (выгрузка ПИР): по каждой заявке на экспертизу видно её реальный результат и историю. У части школ последнее полученное заключение — «Отрицательное», у части сейчас открыта незакрытая заявка на пересмотр. Больше половины этих школ уже были в красной зоне или списке нулевого освоения выше — это, похоже, и есть причина, а не совпадение.</p>
+    <p class="note">Появился источник, которого не было раньше (выгрузка ПИР): по каждой заявке на экспертизу видно её реальный результат и историю. У части школ последнее полученное заключение — «Отрицательное», у части сейчас открыта незакрытая заявка («на пересмотре» — стадия вроде устранения замечаний или рассмотрения ПД, итогового заключения ещё нет). Больше половины этих школ уже были в красной зоне или списке нулевого освоения выше — это, похоже, и есть причина, а не совпадение.</p>
     <div class="tbl-wrap" style="max-height:280px">
       <table class="full">
         <thead><tr><th>Школа</th><th class="r">СГ</th><th>Результат экспертизы</th><th>Дата</th><th>Сейчас на пересмотре</th></tr></thead>
@@ -1063,7 +1064,7 @@ METHOD_BODY = r"""
       </table>
     </div>
 
-    <p class="note">«Положительное» заключение закрывает только техническую часть — смета (СД) заключается отдельно и может отставать. Считаем смету подтверждённой, если по объекту в Simple List заполнена «Согласованная стоимость объекта экспертизы»; если её нет при общем результате «Положительное» — деньги по факту не согласованы. <span id="sdGapNote"></span></p>
+    <p class="note">«Положительное» заключение закрывает только <strong>техчасть (ТЧ)</strong>. <strong>Смета (СД)</strong> согласуется отдельно. На дашборде это два бейджа: зелёная ТЧ + красная СД, если сметы ещё нет. Смету считаем подтверждённой, если в Simple List заполнена «Согласованная стоимость объекта экспертизы». <span id="sdGapNote"></span></p>
 
     <strong style="display:block;margin-top:20px;font-size:1.05rem">Данных не хватает — заглушки вместо разделов</strong>
     <div class="box stub">
@@ -1131,7 +1132,7 @@ DASHBOARD_BODY = r"""
       <button class="fbtn" data-f="credit">Подрядчик кредитует &gt;100 млн ₽</button>
       <button class="fbtn" data-f="balanced">Баланс</button>
       <button class="fbtn" data-f="nobudget">0% освоения 2026</button>
-      <button class="fbtn" data-f="expfail">Экспертиза отклонена/на пересмотре</button>
+      <button class="fbtn" data-f="expfail">Экспертиза: отклонена / на пересмотре</button>
       <button class="fbtn" data-f="urgent">Просрочен сильнее типового + кредитует</button>
       <button class="fbtn" data-f="advance">Типовой аванс</button>
       <button class="fbtn" data-f="priority">Топ приоритет</button>
@@ -1151,12 +1152,13 @@ DASHBOARD_BODY = r"""
         <thead><tr>
           <th class="r" title="Рублёвый приоритет: кредитование × срочность × доля у подрядчика">Приоритет</th>
           <th>Школа</th><th>Округ</th><th>Подрядчик</th><th>РП</th><th class="r">Контракт, млн ₽</th>
-          <th class="r">СГ</th><th class="r">Оплата</th><th class="r">Разница, млн ₽</th><th>Статус</th><th>Ввод</th><th class="r">Экспертиза</th>
+          <th class="r">СГ</th><th class="r">Оплата</th><th class="r">Разница, млн ₽</th><th>Статус</th><th>Ввод</th>
+          <th class="r" title="ТЧ — техчасть экспертизы, СД — смета">Экспертиза</th>
         </tr></thead>
         <tbody id="objTbl"></tbody>
       </table>
     </div>
-    <p class="note">Таблица по убыванию приоритета. Приоритет = сколько подрядчик кредитует (млн) × срочность (просрочка, 0% бюджета) × вес объекта у этого подрядчика. Клик по строке — вкладка «Один объект».</p>
+    <p class="note">Таблица по убыванию приоритета. Приоритет = сколько подрядчик кредитует (млн) × срочность (просрочка, 0% бюджета) × вес объекта у этого подрядчика. Клик по строке — вкладка «Один объект». В колонке экспертизы: <span class="pill ok">ТЧ</span> техчасть ок, <span class="pill err">СД</span> смета не согласована, <span class="pill warn">на пересмотре</span> — заявка в экспертизе ещё открыта (замечания / рассмотрение), заключения нет.</p>
   </div>
 
   <div class="tabpanel" data-tab="contractors" hidden>
@@ -1242,10 +1244,18 @@ function renderObjTbl() {
     const days = o.days_to_open;
     const overdue = days!=null ? (days<0 ? `<span class="pill err">просрочка ${Math.abs(days)} дн.</span>` : `<span class="pill ok">осталось ${days} дн.</span>`) : '—';
     let overrun;
-    if (o.exp_last_result==='Отрицательное') overrun = '<span class="pill err">отклонена</span>';
-    else if (o.exp_pending) overrun = '<span class="pill warn">на пересмотре</span>';
-    else if (o.exp_last_result==='Положительное' && !o.sd_confirmed) overrun = '<span class="pill warn">СД не подтверждена</span>';
-    else overrun = o.exp_overrun!=null ? (o.exp_overrun>5 ? `<span class="pill warn">+${o.exp_overrun}%</span>` : o.exp_overrun+'%') : (o.entered_exp?'без удорожания':'не зашла');
+    if (o.exp_last_result==='Отрицательное') {
+      overrun = '<span class="pill-pair"><span class="pill err" title="Отрицательное заключение">ТЧ−</span></span>';
+    } else if (o.exp_pending) {
+      overrun = '<span class="pill-pair"><span class="pill warn" title="Заявка в экспертизе не закрыта: замечания, рассмотрение ПД и т.п.">на пересмотре</span></span>';
+    } else if (o.exp_last_result==='Положительное' && !o.sd_confirmed) {
+      overrun = '<span class="pill-pair"><span class="pill ok" title="Техчасть (ОПД) — положительное заключение">ТЧ</span><span class="pill err" title="Смета не согласована: нет согласованной стоимости в Акцент">СД</span></span>';
+    } else if (o.exp_last_result==='Положительное' && o.sd_confirmed) {
+      const u = o.exp_overrun!=null ? (o.exp_overrun>5 ? ` +${o.exp_overrun}%` : '') : '';
+      overrun = `<span class="pill-pair"><span class="pill ok" title="Техчасть ок">ТЧ</span><span class="pill ok" title="Смета согласована">СД${u}</span></span>`;
+    } else {
+      overrun = o.entered_exp ? '<span class="pill warn">без заключения</span>' : '—';
+    }
     const score = o.risk_score ? o.risk_score.toLocaleString('ru-RU') : '—';
     return `<tr class="clickable" data-uin="${o.uin}"><td class="r"><strong>${score}</strong></td><td title="${o.full}">${o.name}${o.advance_stuck?' <span class="flag">аванс</span>':''}</td><td>${o.municipality||'—'}</td><td>${o.contractor||'—'}</td><td>${o.rp||'—'}</td>` +
       `<td class="r">${o.contract_value??'—'}</td><td class="r">${o.sg}%</td><td class="r">${o.pct??'—'}%</td>` +
