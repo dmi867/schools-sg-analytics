@@ -794,6 +794,33 @@ def load_data():
             and (k["gap_rub"] or 0) < -50
         )
 
+    # Единый рублёвый приоритет: сколько подрядчик кредитует × срочность (просрочка,
+    # нулевое освоение) × доля этого объекта в риске подрядчика по нашему портфелю.
+    contractor_credit = {}
+    for k in kt_rows:
+        if k["money_status"] == "credit" and (k["gap_rub"] or 0) < 0:
+            c = k["contractor"] or "—"
+            contractor_credit[c] = contractor_credit.get(c, 0) + (-k["gap_rub"])
+    for k in kt_rows:
+        money = max(0.0, -(k["gap_rub"] or 0))
+        d = k["days_to_open"]
+        overdue = max(0, -d) if d is not None else 0
+        urgency = 1.0 + min(overdue / 30.0, 3.0)
+        if "не осваивает бюджет 2026" in k["flags"]:
+            urgency *= 1.25
+        if k.get("urgent_risk"):
+            urgency *= 1.2
+        c_tot = contractor_credit.get(k["contractor"] or "—", 0)
+        share = (money / c_tot) if c_tot > 0 and money > 0 else 0.0
+        k["risk_score"] = (
+            round(money * urgency * (0.5 + 0.5 * share), 1) if money > 0 else 0.0
+        )
+        k["path"] = [
+            {"d": p["d"], "sg": p["sg"], "pay": p["payPct"]}
+            for p in traj.get(k["uin"], [])
+            if p.get("payPct") is not None
+        ]
+
     # Парето по денежному риску: топ объектов по |gap_rub| среди тех, где подрядчик
     # кредитует стройку, с накопленной долей от суммы риска всех "credit"-объектов —
     # чтобы видеть, сколько объектов покрывает большую часть денежного риска портфеля.
@@ -1107,22 +1134,29 @@ DASHBOARD_BODY = r"""
       <button class="fbtn" data-f="expfail">Экспертиза отклонена/на пересмотре</button>
       <button class="fbtn" data-f="urgent">Просрочен сильнее типового + кредитует</button>
       <button class="fbtn" data-f="advance">Типовой аванс</button>
+      <button class="fbtn" data-f="priority">Топ приоритет</button>
     </div>
 
     <strong style="display:block;margin:18px 0 4px">Матрица риска: готовность vs оплата</strong>
-    <p class="note" style="margin-top:0">Каждая точка — школа: по X — стройготовность, по Y — % оплаты по контракту. Пунктирная диагональ — оплата точно по готовности; полоса ±10 п.п. вокруг неё — тот же порог, что делит статусы в таблице ниже. Клик по точке — график этой школы (вкладка «Один объект»).</p>
+    <p class="note" style="margin-top:0">Точка — школа сейчас. Выберите школу и нажмите «Динамика» — кружок пробежит по её истории (куда шла готовность и оплата). Клик по точке тоже выбирает школу.</p>
+    <div class="row" style="margin:8px 0 4px">
+      <select id="selMatrixSchool" style="min-width:220px"></select>
+      <button type="button" class="fbtn" id="btnPlayPath">Динамика</button>
+      <span class="note" id="matrixPlayLabel" style="margin:0"></span>
+    </div>
     <div class="chart" style="height:420px"><canvas id="cMatrix"></canvas></div>
 
     <div class="tbl-wrap" style="max-height:520px">
       <table class="full">
         <thead><tr>
+          <th class="r" title="Рублёвый приоритет: кредитование × срочность × доля у подрядчика">Приоритет</th>
           <th>Школа</th><th>Округ</th><th>Подрядчик</th><th>РП</th><th class="r">Контракт, млн ₽</th>
           <th class="r">СГ</th><th class="r">Оплата</th><th class="r">Разница, млн ₽</th><th>Статус</th><th>Ввод</th><th class="r">Экспертиза</th>
         </tr></thead>
         <tbody id="objTbl"></tbody>
       </table>
     </div>
-    <p class="note">Клик по строке — график этого объекта на вкладке «Один объект». Разница = оплата% минус СГ% × сумма контракта.</p>
+    <p class="note">Таблица по убыванию приоритета. Приоритет = сколько подрядчик кредитует (млн) × срочность (просрочка, 0% бюджета) × вес объекта у этого подрядчика. Клик по строке — вкладка «Один объект».</p>
   </div>
 
   <div class="tabpanel" data-tab="contractors" hidden>
@@ -1184,6 +1218,11 @@ document.getElementById('dK3').textContent = (-DATA.objects.filter(o=>o.money_st
 document.getElementById('dK4').textContent = DATA.objects.filter(o=>o.flags && o.flags.includes('не осваивает бюджет 2026')).length;
 
 let activeFilter = 'all', activeContractor = null;
+const priorityCutoff = (() => {
+  const scores = DATA.objects.map(o => o.risk_score || 0).filter(s => s > 0).sort((a,b)=>b-a);
+  if (!scores.length) return 999;
+  return scores[Math.min(9, scores.length - 1)]; // топ-10 по порогу 10-го
+})();
 
 function passesFilter(o) {
   if (activeContractor && o.contractor !== activeContractor) return false;
@@ -1193,11 +1232,12 @@ function passesFilter(o) {
   if (activeFilter==='expfail') return o.exp_last_result==='Отрицательное' || o.exp_pending;
   if (activeFilter==='urgent') return o.urgent_risk;
   if (activeFilter==='advance') return o.advance_stuck;
+  if (activeFilter==='priority') return (o.risk_score||0) >= priorityCutoff && (o.risk_score||0) > 0;
   return true;
 }
 
 function renderObjTbl() {
-  const rows = DATA.objects.filter(passesFilter).sort((a,b)=>Math.abs(b.gap_rub||0)-Math.abs(a.gap_rub||0));
+  const rows = DATA.objects.filter(passesFilter).sort((a,b)=>(b.risk_score||0)-(a.risk_score||0));
   document.getElementById('objTbl').innerHTML = rows.map(o => {
     const days = o.days_to_open;
     const overdue = days!=null ? (days<0 ? `<span class="pill err">просрочка ${Math.abs(days)} дн.</span>` : `<span class="pill ok">осталось ${days} дн.</span>`) : '—';
@@ -1206,17 +1246,25 @@ function renderObjTbl() {
     else if (o.exp_pending) overrun = '<span class="pill warn">на пересмотре</span>';
     else if (o.exp_last_result==='Положительное' && !o.sd_confirmed) overrun = '<span class="pill warn">СД не подтверждена</span>';
     else overrun = o.exp_overrun!=null ? (o.exp_overrun>5 ? `<span class="pill warn">+${o.exp_overrun}%</span>` : o.exp_overrun+'%') : (o.entered_exp?'без удорожания':'не зашла');
-    return `<tr class="clickable" data-uin="${o.uin}"><td title="${o.full}">${o.name}${o.advance_stuck?' <span class="flag">аванс</span>':''}</td><td>${o.municipality||'—'}</td><td>${o.contractor||'—'}</td><td>${o.rp||'—'}</td>` +
+    const score = o.risk_score ? o.risk_score.toLocaleString('ru-RU') : '—';
+    return `<tr class="clickable" data-uin="${o.uin}"><td class="r"><strong>${score}</strong></td><td title="${o.full}">${o.name}${o.advance_stuck?' <span class="flag">аванс</span>':''}</td><td>${o.municipality||'—'}</td><td>${o.contractor||'—'}</td><td>${o.rp||'—'}</td>` +
       `<td class="r">${o.contract_value??'—'}</td><td class="r">${o.sg}%</td><td class="r">${o.pct??'—'}%</td>` +
       `<td class="r">${moneyCell(o.gap_rub)}</td><td><span class="pill ${STATUS_PILL[o.money_status]}">${STATUS_LABEL[o.money_status]}</span></td><td>${overdue}</td><td class="r">${overrun}</td></tr>`;
   }).join('');
-  document.querySelectorAll('#objTbl tr.clickable').forEach(tr => tr.onclick = () => { sel.value = tr.dataset.uin; drawTraj(tr.dataset.uin); switchTab('one'); });
+  document.querySelectorAll('#objTbl tr.clickable').forEach(tr => tr.onclick = () => {
+    sel.value = tr.dataset.uin;
+    selMatrix.value = tr.dataset.uin;
+    drawTraj(tr.dataset.uin);
+    setPlaySchool(tr.dataset.uin, false);
+    switchTab('one');
+  });
 }
 
 document.querySelectorAll('#filterBar .fbtn').forEach(btn => btn.onclick = () => {
   document.querySelectorAll('#filterBar .fbtn').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
   activeFilter = btn.dataset.f;
+  stopPlay();
   renderObjTbl(); renderMatrix();
 });
 
@@ -1246,10 +1294,7 @@ function renderRollup() {
 renderObjTbl();
 renderRollup();
 
-// Матрица риска: та же классификация money_status (гэп % оплаты минус % готовности,
-// порог ±10 п.п.), что и в таблице объектов и в STATUS_PILL — просто как точки, а не строки.
-// Подчиняется тому же фильтру (activeFilter/activeContractor), что и таблица — один срез
-// для всех визуализаций на странице.
+// Матрица риска + анимация траектории выбранной школы.
 const MATRIX_STATUS = {
   over:     { label: 'Избыток оплаты (оплата выше готовности)', color: '#D94040', shape: 'triangle' },
   credit:   { label: 'Кредитует подрядчик (готовность выше оплаты)', color: '#E8A020', shape: 'rect' },
@@ -1257,6 +1302,71 @@ const MATRIX_STATUS = {
   unknown:  { label: 'Нет данных по оплате', color: '#93A8BC', shape: 'circle' },
 };
 let chartMatrix, matrixDatasets;
+let playUin = null, playIdx = 0, playTimer = null;
+const selMatrix = document.getElementById('selMatrixSchool');
+const btnPlay = document.getElementById('btnPlayPath');
+const playLabel = document.getElementById('matrixPlayLabel');
+
+DATA.objects.slice().sort((a,b)=>(b.risk_score||0)-(a.risk_score||0)).forEach(o => {
+  const opt = document.createElement('option');
+  opt.value = o.uin;
+  opt.textContent = o.name + (o.risk_score ? ` (${o.risk_score})` : '');
+  selMatrix.appendChild(opt);
+});
+selMatrix.value = DATA.defaultUin;
+
+function pathFor(uin) {
+  const o = DATA.objects.find(x => x.uin === uin);
+  return (o && o.path) || [];
+}
+
+function stopPlay() {
+  if (playTimer) { clearInterval(playTimer); playTimer = null; }
+  btnPlay.textContent = 'Динамика';
+}
+
+function setPlaySchool(uin, rebuild) {
+  stopPlay();
+  playUin = uin;
+  playIdx = Math.max(0, pathFor(uin).length - 1);
+  if (selMatrix.value !== uin) selMatrix.value = uin;
+  const path = pathFor(uin);
+  playLabel.textContent = path.length
+    ? `точек в истории: ${path.length} · сейчас ${path[playIdx].d}`
+    : 'нет траектории оплаты';
+  if (rebuild !== false) renderMatrix();
+}
+
+function applyPlayOverlay(datasets) {
+  const path = pathFor(playUin);
+  if (path.length < 1) return datasets;
+  const trail = path.slice(0, playIdx + 1).map(p => ({ x: p.sg, y: p.pay }));
+  datasets.push({
+    label: 'Траектория',
+    data: trail,
+    showLine: true,
+    borderColor: '#143260',
+    backgroundColor: 'rgba(20,50,96,.08)',
+    pointRadius: 0,
+    borderWidth: 2,
+    tension: 0.15,
+    order: 0,
+  });
+  const cur = path[Math.min(playIdx, path.length - 1)];
+  datasets.push({
+    label: 'Движение',
+    data: [{ x: cur.sg, y: cur.pay, d: cur.d }],
+    backgroundColor: '#143260',
+    borderColor: '#fff',
+    borderWidth: 2,
+    pointRadius: 11,
+    pointHoverRadius: 13,
+    pointStyle: 'circle',
+    order: 1,
+  });
+  return datasets;
+}
+
 function renderMatrix() {
   const matrixObjs = DATA.objects.filter(o => o.pct != null && passesFilter(o));
   matrixDatasets = Object.keys(MATRIX_STATUS).map(status => {
@@ -1271,25 +1381,30 @@ function renderMatrix() {
       pointStyle: cfg.shape,
       pointRadius: 6,
       pointHoverRadius: 8,
+      order: 2,
     };
   }).filter(ds => ds.data.length);
+  applyPlayOverlay(matrixDatasets);
   if (chartMatrix) chartMatrix.destroy();
   chartMatrix = new Chart(document.getElementById('cMatrix'), {
     type: 'scatter',
     data: { datasets: matrixDatasets },
     options: {
       responsive: true, maintainAspectRatio: false,
+      animation: false,
       onClick: (evt, els) => {
         if (!els.length) return;
         const ds = matrixDatasets[els[0].datasetIndex], pt = ds.data[els[0].index];
-        sel.value = pt.uin; drawTraj(pt.uin); switchTab('one');
+        if (!pt || !pt.uin) return;
+        sel.value = pt.uin;
+        setPlaySchool(pt.uin);
       },
       plugins: {
         legend: { position: 'bottom', labels: { boxWidth: 12, usePointStyle: true } },
         datalabels: { display: false },
         tooltip: {
           callbacks: {
-            title: items => items[0].raw.full,
+            title: items => items[0].raw.full || items[0].raw.d || 'Точка',
             label: item => `Готовность ${item.raw.x}%, оплата ${item.raw.y}%`,
           },
         },
@@ -1308,7 +1423,33 @@ function renderMatrix() {
     },
   });
 }
-renderMatrix();
+
+selMatrix.onchange = () => setPlaySchool(selMatrix.value);
+btnPlay.onclick = () => {
+  const path = pathFor(playUin);
+  if (path.length < 2) {
+    playLabel.textContent = 'мало точек для анимации';
+    return;
+  }
+  if (playTimer) { stopPlay(); return; }
+  playIdx = 0;
+  btnPlay.textContent = 'Стоп';
+  renderMatrix();
+  playTimer = setInterval(() => {
+    playIdx++;
+    if (playIdx >= path.length) {
+      playIdx = path.length - 1;
+      stopPlay();
+      playLabel.textContent = `готово · ${path[playIdx].d} · СГ ${path[playIdx].sg}% / оплата ${path[playIdx].pay}%`;
+      renderMatrix();
+      return;
+    }
+    playLabel.textContent = `${path[playIdx].d} · СГ ${path[playIdx].sg}% / оплата ${path[playIdx].pay}%`;
+    renderMatrix();
+  }, 280);
+};
+
+setPlaySchool(DATA.defaultUin);
 
 const sel = document.getElementById('selSchool');
 DATA.objects.forEach(o=>{
