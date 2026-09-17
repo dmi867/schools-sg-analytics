@@ -603,6 +603,17 @@ def load_data():
         if advance_stuck:
             flags.append("типовой аванс")
 
+        # Стоимости экспертизы в Simple List — тыс. ₽; в таблице показываем млн ₽.
+        plan_cost = info.get("plan_cost")
+        agreed_cost = info.get("agreed_cost")
+        exp_plan_mln = round(plan_cost / 1000, 1) if plan_cost else None
+        exp_agreed_mln = round(agreed_cost / 1000, 1) if agreed_cost else None
+        exp_delta_mln = (
+            round((agreed_cost - plan_cost) / 1000, 1)
+            if plan_cost and agreed_cost
+            else None
+        )
+
         kt_rows.append(
             {
                 "uin": uin,
@@ -621,6 +632,9 @@ def load_data():
                 "address": addr.get("address"),
                 "municipality": addr.get("municipality"),
                 "exp_overrun": info.get("exp_overrun"),
+                "exp_plan_mln": exp_plan_mln,
+                "exp_agreed_mln": exp_agreed_mln,
+                "exp_delta_mln": exp_delta_mln,
                 "entered_exp": info.get("entered_exp", False),
                 "opening_plan": fmt_date(opening_plan),
                 "days_to_open": days_to_open,
@@ -1154,11 +1168,14 @@ DASHBOARD_BODY = r"""
           <th>Школа</th><th>Округ</th><th>Подрядчик</th><th>РП</th><th class="r">Контракт, млн ₽</th>
           <th class="r">СГ</th><th class="r">Оплата</th><th class="r">Разница, млн ₽</th><th>Статус</th><th>Ввод</th>
           <th class="r" title="ТЧ — техчасть экспертизы, СД — смета">Экспертиза</th>
+          <th class="r" title="(согласованная − плановая) / плановая стоимость объекта экспертизы">Удорожание, %</th>
+          <th class="r" title="Согласованная − плановая стоимость объекта экспертизы">Удорожание, млн ₽</th>
+          <th class="r" title="Согласованная стоимость объекта экспертизы">После удорожания, млн ₽</th>
         </tr></thead>
         <tbody id="objTbl"></tbody>
       </table>
     </div>
-    <p class="note">Таблица по убыванию приоритета. Приоритет = сколько подрядчик кредитует (млн) × срочность (просрочка, 0% бюджета) × вес объекта у этого подрядчика. Клик по строке — вкладка «Один объект». Экспертиза: <span class="pill ok">ТЧ+СД</span> оба ок, <span class="pill ok">ТЧ</span> только техчасть (сметы нет), <span class="pill err">ТЧ отклонена</span>, <span class="pill warn">в экспертизе</span>.</p>
+    <p class="note">Таблица по убыванию приоритета. Приоритет = сколько подрядчик кредитует (млн) × срочность (просрочка, 0% бюджета) × вес объекта у этого подрядчика. Клик по строке — вкладка «Один объект». Экспертиза: <span class="pill ok">ТЧ+СД</span> оба ок, <span class="pill ok">ТЧ</span> только техчасть (сметы нет), <span class="pill err">ТЧ отклонена</span>, <span class="pill warn">в экспертизе</span>. Удорожание — из плановой и согласованной стоимости экспертизы в Simple List (пусто, если сметы ещё нет).</p>
   </div>
 
   <div class="tabpanel" data-tab="contractors" hidden>
@@ -1249,17 +1266,18 @@ function renderObjTbl() {
     } else if (o.exp_pending) {
       overrun = '<span class="pill-pair"><span class="pill warn" title="Заявка ещё открыта: замечания, рассмотрение ПД и т.п.">в экспертизе</span></span>';
     } else if (o.exp_last_result==='Положительное' && o.sd_confirmed) {
-      const u = o.exp_overrun!=null && o.exp_overrun>5 ? ` +${o.exp_overrun}%` : '';
-      overrun = `<span class="pill-pair"><span class="pill ok" title="Техчасть и смета подтверждены">ТЧ+СД${u}</span></span>`;
+      overrun = '<span class="pill-pair"><span class="pill ok" title="Техчасть и смета подтверждены">ТЧ+СД</span></span>';
     } else if (o.exp_last_result==='Положительное' && !o.sd_confirmed) {
       overrun = '<span class="pill-pair"><span class="pill ok" title="Техчасть ок, смета ещё не согласована">ТЧ</span></span>';
     } else {
       overrun = o.entered_exp ? '<span class="pill warn">без заключения</span>' : '—';
     }
     const score = o.risk_score ? o.risk_score.toLocaleString('ru-RU') : '—';
+    const overrunPct = o.exp_overrun!=null ? `<span class="money ${o.exp_overrun>0?'pos':(o.exp_overrun<0?'neg':'')}">${o.exp_overrun>0?'+':''}${o.exp_overrun}%</span>` : '—';
     return `<tr class="clickable" data-uin="${o.uin}"><td class="r"><strong>${score}</strong></td><td title="${o.full}">${o.name}${o.advance_stuck?' <span class="flag">аванс</span>':''}</td><td>${o.municipality||'—'}</td><td>${o.contractor||'—'}</td><td>${o.rp||'—'}</td>` +
       `<td class="r">${o.contract_value??'—'}</td><td class="r">${o.sg}%</td><td class="r">${o.pct??'—'}%</td>` +
-      `<td class="r">${moneyCell(o.gap_rub)}</td><td><span class="pill ${STATUS_PILL[o.money_status]}">${STATUS_LABEL[o.money_status]}</span></td><td>${overdue}</td><td class="r">${overrun}</td></tr>`;
+      `<td class="r">${moneyCell(o.gap_rub)}</td><td><span class="pill ${STATUS_PILL[o.money_status]}">${STATUS_LABEL[o.money_status]}</span></td><td>${overdue}</td><td class="r">${overrun}</td>` +
+      `<td class="r">${overrunPct}</td><td class="r">${moneyCell(o.exp_delta_mln)}</td><td class="r">${o.exp_agreed_mln??'—'}</td></tr>`;
   }).join('');
   document.querySelectorAll('#objTbl tr.clickable').forEach(tr => tr.onclick = () => {
     sel.value = tr.dataset.uin;
