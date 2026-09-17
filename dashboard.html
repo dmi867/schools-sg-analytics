@@ -146,7 +146,7 @@
         <tbody id="objTbl"></tbody>
       </table>
     </div>
-    <p class="note">Таблица по убыванию приоритета. Приоритет = сколько подрядчик кредитует (млн) × срочность (просрочка, 0% бюджета) × вес объекта у этого подрядчика. Клик по строке — вкладка «Один объект». Экспертиза: <span class="pill ok">ТЧ ок</span> / <span class="pill err">ТЧ отклонена</span>, <span class="pill ok">СД ок</span> / <span class="pill err">СД нет</span>, <span class="pill warn">в экспертизе</span> — заявка ещё открыта.</p>
+    <p class="note">Таблица по убыванию приоритета. Приоритет = сколько подрядчик кредитует (млн) × срочность (просрочка, 0% бюджета) × вес объекта у этого подрядчика. Клик по строке — вкладка «Один объект». Экспертиза: <span class="pill ok">ТЧ+СД</span> оба ок, <span class="pill ok">ТЧ</span> только техчасть (сметы нет), <span class="pill err">ТЧ отклонена</span>, <span class="pill warn">в экспертизе</span>.</p>
   </div>
 
   <div class="tabpanel" data-tab="contractors" hidden>
@@ -234,11 +234,11 @@ function renderObjTbl() {
       overrun = '<span class="pill-pair"><span class="pill err" title="Отрицательное заключение экспертизы">ТЧ отклонена</span></span>';
     } else if (o.exp_pending) {
       overrun = '<span class="pill-pair"><span class="pill warn" title="Заявка ещё открыта: замечания, рассмотрение ПД и т.п.">в экспертизе</span></span>';
-    } else if (o.exp_last_result==='Положительное' && !o.sd_confirmed) {
-      overrun = '<span class="pill-pair"><span class="pill ok" title="Техчасть (ОПД) — положительное заключение">ТЧ ок</span><span class="pill err" title="Смета не согласована: нет согласованной стоимости в Акцент">СД нет</span></span>';
     } else if (o.exp_last_result==='Положительное' && o.sd_confirmed) {
-      const u = o.exp_overrun!=null ? (o.exp_overrun>5 ? ` +${o.exp_overrun}%` : '') : '';
-      overrun = `<span class="pill-pair"><span class="pill ok" title="Техчасть ок">ТЧ ок</span><span class="pill ok" title="Смета согласована">СД ок${u}</span></span>`;
+      const u = o.exp_overrun!=null && o.exp_overrun>5 ? ` +${o.exp_overrun}%` : '';
+      overrun = `<span class="pill-pair"><span class="pill ok" title="Техчасть и смета подтверждены">ТЧ+СД${u}</span></span>`;
+    } else if (o.exp_last_result==='Положительное' && !o.sd_confirmed) {
+      overrun = '<span class="pill-pair"><span class="pill ok" title="Техчасть ок, смета ещё не согласована">ТЧ</span></span>';
     } else {
       overrun = o.entered_exp ? '<span class="pill warn">без заключения</span>' : '—';
     }
