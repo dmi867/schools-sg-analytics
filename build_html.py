@@ -23,7 +23,9 @@ ICON_WARN = (
     '<path d="M12 9v4"/><path d="M12 17h.01"/></svg>'
 )
 
-ADVANCE_PCTS = {30.0, 49.0}  # типовые проценты аванса, а не расчётный факт оплаты
+ADVANCE_PCTS = {30.0, 49.0}  # типовые проценты аванса в плане СГ, а не расчётный факт оплаты
+# Кластер «типовой аванс, не прогресс»: % выплат застрял около размера аванса по контракту.
+ADVANCE_STUCK_BAND = (26.5, 27.5)
 
 # Ручные исправления опечаток источника (Simple List расходится с более свежими данными).
 NAME_OVERRIDES = {
@@ -88,6 +90,56 @@ def median(xs):
     s = sorted(xs)
     mid = n // 2
     return (s[mid - 1] + s[mid]) / 2 if n % 2 == 0 else s[mid]
+
+
+def percentile(xs, p):
+    s = sorted(xs)
+    if not s:
+        return 0.0
+    if len(s) == 1:
+        return float(s[0])
+    k = (len(s) - 1) * p / 100
+    f = math.floor(k)
+    c = math.ceil(k)
+    if f == c:
+        return float(s[int(k)])
+    return float(s[f] * (c - k) + s[c] * (k - f))
+
+
+def iqr(xs):
+    if len(xs) < 4:
+        return 0.0
+    return percentile(xs, 75) - percentile(xs, 25)
+
+
+def weighted_median(pairs):
+    """pairs: list of (value, weight). Returns None if empty."""
+    if not pairs:
+        return None
+    items = sorted(((float(v), float(w)) for v, w in pairs if w and w > 0), key=lambda x: x[0])
+    if not items:
+        return median([v for v, _ in pairs])
+    total_w = sum(w for _, w in items)
+    half = total_w / 2
+    acc = 0.0
+    for v, w in items:
+        acc += w
+        if acc >= half:
+            return v
+    return items[-1][0]
+
+
+def is_advance_stuck(pay_pct, last_pt):
+    """True if % выплат — типовой аванс, а не прогресс по актам."""
+    if pay_pct is not None and ADVANCE_STUCK_BAND[0] <= pay_pct <= ADVANCE_STUCK_BAND[1]:
+        return True
+    if last_pt:
+        adv, reg = last_pt.get("advPct"), last_pt.get("regPct")
+        # Только аванс, платежей по актам нет; % выплат совпадает с долей аванса.
+        if adv and adv > 0 and (not reg or reg < 0.5) and pay_pct is not None:
+            if abs(pay_pct - adv) < 1.5:
+                return True
+    return False
 
 
 def corr(xs, ys):
@@ -157,7 +209,7 @@ def load_ksg():
     return kt
 
 
-SIMPLE_LIST_FILE = "0709_Акцент_Simple List.xlsx"
+SIMPLE_LIST_FILE = "1409_Акцент_Simple List.xlsx"
 
 
 def load_simple_list():
@@ -302,7 +354,7 @@ OPEN_EXPERTISE_STAGES = {
 
 
 def load_pir():
-    path = RAW_DIR / "0709_Выгрузка_ПИР.xlsx"
+    path = RAW_DIR / "1409_Выгрузка_ПИР.xlsx"
     if not path.exists():
         return {}
     wb = openpyxl.load_workbook(path, data_only=True)
@@ -373,7 +425,7 @@ def load_data():
     cross, per, traj, kt_rows, kt_dates = [], [], {}, [], {}
     budget_alert = []
     STAGE_EDGES = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
-    stage_gaps = {e: {"plan": [], "pay": []} for e in STAGE_EDGES}
+    stage_gaps = {e: {"plan": [], "pay": [], "pay_w": []} for e in STAGE_EDGES}
 
     per_object = load_per_object()
     for uin, rec in sorted(per_object.items()):
@@ -426,12 +478,19 @@ def load_data():
             if hit["plan"] is not None:
                 stage_gaps[edge]["plan"].append(hit["sg"] - hit["plan"])
             if hit["payPct"] is not None:
-                stage_gaps[edge]["pay"].append(hit["sg"] - hit["payPct"])
+                gap = hit["sg"] - hit["payPct"]
+                stage_gaps[edge]["pay"].append(gap)
+                cv = info.get("contract_value") or 0
+                if cv > 0:
+                    stage_gaps[edge]["pay_w"].append((gap, cv))
 
         if len(pts) > 36:
             step = math.ceil(len(pts) / 36)
             pts = pts[::step][:-1] + [pts[-1]]
         traj[uin] = pts
+
+        last_pt = pts[-1] if pts else None
+        advance_stuck = is_advance_stuck(pay_pct, last_pt)
 
         pays_t = [p["pay"] for p in pts]
         vary = max(pays_t) - min(pays_t) >= 0.01
@@ -541,6 +600,8 @@ def load_data():
         sd_confirmed = bool(info.get("agreed_cost"))
         if pir_info.get("exp_last_result") == "Положительное" and not sd_confirmed:
             flags.append("смета (СД) не подтверждена")
+        if advance_stuck:
+            flags.append("типовой аванс")
 
         kt_rows.append(
             {
@@ -577,6 +638,7 @@ def load_data():
                 "exp_pending": pir_info.get("exp_pending", False),
                 "pir_end_fact": pir_info.get("pir_end_fact"),
                 "sd_confirmed": sd_confirmed,
+                "advance_stuck": advance_stuck,
             }
         )
 
@@ -588,6 +650,7 @@ def load_data():
                 "sg": round(last["fact"], 1),
                 "pct": pay_pct,
                 "advance": pay_pct in ADVANCE_PCTS,
+                "advance_stuck": advance_stuck,
                 "pay": round(total / 1e6, 1),
                 "gap": sg_pay_gap,
                 "contractor": contractor,
@@ -649,16 +712,25 @@ def load_data():
         pay_vals = stage_gaps[edge]["pay"]
         if not plan_vals and not pay_vals:
             continue
+        iqr_val = iqr(pay_vals)
+        # 0.75×IQR: адаптивно по этапу (шире разброс → выше порог), но 1.5×IQR
+        # на этом портфеле опустошает красную зону (IQR на 90% ≈ 24 п.п.).
+        threshold = round(max(8.0, 0.75 * iqr_val), 1) if pay_vals else None
+        pay_w = weighted_median(stage_gaps[edge]["pay_w"])
         stage_analysis.append(
             {
                 "stage": edge,
                 "n": max(len(plan_vals), len(pay_vals)),
                 "plan_gap": round(median(plan_vals), 1) if plan_vals else None,
                 "pay_gap": round(median(pay_vals), 1) if pay_vals else None,
+                "pay_gap_w": round(pay_w, 1) if pay_w is not None else None,
+                "iqr": round(iqr_val, 1) if pay_vals else None,
+                "threshold": threshold,
             }
         )
 
     stage_by_edge = {s["stage"]: s["pay_gap"] for s in stage_analysis if s["pay_gap"] is not None}
+    stage_threshold = {s["stage"]: s["threshold"] for s in stage_analysis if s["threshold"] is not None}
 
     red_zone = []
     for k in kt_rows:
@@ -667,6 +739,7 @@ def load_data():
         stage = max((e for e in STAGE_EDGES if e <= k["sg"] and e in stage_by_edge), default=None)
         if stage is None:
             continue
+        thr = stage_threshold.get(stage, 15)
         deviation = round(k["sg_pay_gap"] - stage_by_edge[stage], 1)
         red_zone.append(
             {
@@ -678,6 +751,9 @@ def load_data():
                 "stage": stage,
                 "stage_median": stage_by_edge[stage],
                 "deviation": deviation,
+                "threshold": thr,
+                "in_red": deviation > thr,
+                "advance_stuck": k.get("advance_stuck", False),
             }
         )
     red_zone.sort(key=lambda x: -x["deviation"])
@@ -762,7 +838,8 @@ def load_data():
             "pearson_no_advance": round(pearson_na, 3) if pearson_na is not None else None,
             "pearson_no_advance_p": two_tailed_p(pearson_na, len(no_adv)),
             "n_no_budget2026": len(budget_alert),
-            "n_red_zone": sum(1 for r in red_zone if r["deviation"] > 15),
+            "n_red_zone": sum(1 for r in red_zone if r["in_red"]),
+            "n_advance_stuck": sum(1 for o in kt_rows if o.get("advance_stuck")),
             "n_exp_failed": sum(1 for o in kt_rows if o["exp_last_result"] == "Отрицательное" or o["exp_pending"]),
             "n_urgent_risk": sum(1 for o in kt_rows if o["urgent_risk"]),
             "n_limit_gap": sum(1 for o in kt_rows if (o["limit_gap"] or 0) > 20),
@@ -792,24 +869,23 @@ HEAD_STYLE = r"""<!DOCTYPE html>
 <title>__TITLE__</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
 <style>
   :root {
-    --bg:#EEF3F8; --surface:#fff; --div:#EDF2F7; --line:#DCE6F0;
-    --text:#0D2040; --muted:#5A7189; --faint:#93A8BC;
+    --bg:#F4F7FA; --surface:#fff; --div:#EAF0F5; --line:#D6E2EC;
+    --text:#0D2040; --muted:#5A7189; --faint:#8BA4B8;
+    --navy:#143260;
     --accent:#1B8A9C; --accent-l:#22B0C8; --accent-d:#126880; --accent-dim:rgba(27,138,156,.09);
     --ok:#27AE60; --warn:#E8A020; --err:#D94040; --info:#2E7CC4;
     --ok-bg:#E8F6EE; --warn-bg:#FDF3E2; --err-bg:#FBE9E9; --info-bg:#E9F1FB;
   }
   * { box-sizing:border-box }
-  body { margin:0; font:15px/1.55 'Golos Text',Inter,system-ui,sans-serif; background:var(--bg); color:var(--text); letter-spacing:-.01em }
+  body { margin:0; font:15px/1.55 'Golos Text','Manrope',system-ui,sans-serif; background:var(--bg); color:var(--text); letter-spacing:-.01em }
   .wrap { max-width:__WRAP__px; margin:0 auto; padding:28px 18px 56px }
-  h1 { font-size:1.65rem; font-weight:700; margin:0 0 4px; letter-spacing:-.02em;
-    background:linear-gradient(135deg, hsl(200,60%,23%), hsl(188,70%,30%));
-    -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; display:inline-block }
+  h1 { font-size:1.65rem; font-weight:700; margin:0 0 4px; letter-spacing:-.02em; color:var(--navy) }
   .sub { color:var(--muted); margin:0 0 20px; font-size:.92rem }
   .brand { display:block; height:34px; margin-bottom:14px }
   ul.brief { margin:0; padding-left:1.2rem; color:var(--muted) }
@@ -822,24 +898,24 @@ HEAD_STYLE = r"""<!DOCTYPE html>
   .chart.tall { height:340px }
   .note { font-size:.82rem; color:var(--faint); margin:6px 0 0 }
   .box { background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:16px 18px; margin:12px 0; box-shadow:0 1px 3px rgba(13,32,64,.05) }
-  .box.stub { background:repeating-linear-gradient(135deg, var(--surface) 0 10px, #F7FAFC 10px 20px); border-style:dashed }
+  .box.stub { background:repeating-linear-gradient(135deg, var(--surface) 0 10px, #EAF0F5 10px 20px); border-style:dashed }
   .mini table { width:100%; font-size:.84rem; border-collapse:collapse }
   .mini th,.mini td { padding:7px 8px; border-bottom:1px solid var(--div); text-align:left }
-  .mini th { color:var(--faint); font-weight:600; font-size:.72rem; letter-spacing:.04em; text-transform:uppercase; background:#F7FAFC }
+  .mini th { color:var(--faint); font-weight:600; font-size:.72rem; letter-spacing:.04em; text-transform:uppercase; background:#EAF0F5 }
   .mini td.r,.mini th.r { text-align:right; font-variant-numeric:tabular-nums }
   details { background:var(--surface); border:1px solid var(--line); border-radius:12px; margin:10px 0; overflow:hidden; box-shadow:0 1px 3px rgba(13,32,64,.05) }
   details > summary { cursor:pointer; padding:14px 18px; font-weight:600; list-style:none; user-select:none }
   details > summary::-webkit-details-marker { display:none }
   details > summary::after { content:'+'; float:right; color:var(--faint); font-weight:400 }
   details[open] > summary::after { content:'−' }
-  details > summary:hover { background:#F7FAFC }
+  details > summary:hover { background:#EAF0F5 }
   .detail-body { padding:0 18px 18px; border-top:1px solid var(--div) }
   select { font:inherit; padding:6px 10px; border:1px solid var(--line); border-radius:8px; background:#fff; max-width:100% }
   .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:10px 0 }
   .tag { font-size:.75rem; padding:3px 9px; background:var(--accent-dim); border:1px solid var(--line); border-radius:99px; color:var(--accent-d); font-weight:500 }
   table.full { width:100%; border-collapse:collapse; font-size:.84rem }
   table.full th,table.full td { padding:8px 9px; border-bottom:1px solid var(--div) }
-  table.full th { background:#F7FAFC; position:sticky; top:0; text-align:left; color:var(--faint); font-weight:600; font-size:.72rem; letter-spacing:.04em; text-transform:uppercase }
+  table.full th { background:#EAF0F5; position:sticky; top:0; text-align:left; color:var(--faint); font-weight:600; font-size:.72rem; letter-spacing:.04em; text-transform:uppercase }
   table.full td.r,table.full th.r { text-align:right; font-variant-numeric:tabular-nums }
   .tbl-wrap { max-height:420px; overflow:auto; border:1px solid var(--line); border-radius:10px; margin-top:10px }
   .flag { font-size:.72rem; padding:2px 7px; margin:1px 2px 1px 0; display:inline-block; background:var(--warn-bg); border:1px solid #EFCB84; border-radius:5px; color:#8A5E10 }
@@ -853,9 +929,9 @@ HEAD_STYLE = r"""<!DOCTYPE html>
   .pill.warn::before { background:#8A5E10 }
   .pill.err { background:var(--err-bg); color:#A32E2E }
   .pill.err::before { background:#A32E2E }
-  .stub-label { display:inline-block; font-size:.7rem; font-weight:600; letter-spacing:.03em; text-transform:uppercase; color:var(--faint); background:#F7FAFC; border:1px solid var(--line); border-radius:5px; padding:2px 8px }
-  .stub-label.review { color:var(--accent-d); background:var(--accent-dim); border-color:var(--accent-l) }
-  .box.review { border-color:var(--accent-l); background:#F3FBFC }
+  .stub-label { display:inline-block; font-size:.7rem; font-weight:600; letter-spacing:.03em; text-transform:uppercase; color:var(--faint); background:#EAF0F5; border:1px solid var(--line); border-radius:5px; padding:2px 8px }
+  .stub-label.done { color:var(--accent-d); background:var(--accent-dim); border-color:var(--accent-l) }
+  .box.done { border-color:var(--accent-l); background:#F3FBFC }
   .kpis.four { grid-template-columns:repeat(4,1fr) }
   @media(max-width:900px) { .kpis.four { grid-template-columns:repeat(2,1fr) } }
   @media(max-width:700px) { .kpis,.kpis.four { grid-template-columns:1fr } }
@@ -891,15 +967,15 @@ METHOD_BODY = r"""
     <p class="note" style="margin:0 0 10px">Портфель — 48 капремонтов школ. Ниже — риск по деньгам, а не по проценту готовности: пять правил и решения, которые из них следуют. У каждого правила — цифры конкретно по этому портфелю, без общих слов.</p>
 
     <strong style="display:block;margin-top:16px;font-size:1.05rem">1. Судить объект по отклонению от нормы для его этапа, не по проценту оплаты</strong>
-    <p class="note">Разрыв между готовностью и оплатой растёт по ходу стройки у всех объектов одинаково закономерно: на старте аванс идёт впереди работ, после экспертизы оплата по актам отстаёт. Это норма, а не проблема сама по себе. Проблема — когда конкретный объект отклоняется от этой нормы. Кривая ниже — медиана по всем 48 школам на каждом этапе готовности, это и есть точка отсчёта:</p>
+    <p class="note">Разрыв между готовностью и оплатой растёт по ходу стройки у всех объектов одинаково закономерно: на старте аванс идёт впереди работ, после экспертизы оплата по актам отстаёт. Это норма, а не проблема сама по себе. Проблема — когда конкретный объект отклоняется от этой нормы. На графике две кривые разрыва СГ−выплаты: сплошная — медиана по школам (каждая школа = один голос), пунктир — взвешенная по объёму контракта (типичный рубль портфеля).</p>
     <div class="chart tall"><canvas id="cStage"></canvas></div>
     <p class="note" id="stageNote" style="margin-top:8px"></p>
 
-    <strong style="display:block;margin-top:20px;font-size:1.05rem">2. Красная зона: <span id="mthRedN"></span> школ отклоняются от нормы на 15+ п.п.</strong>
-    <p class="note">На этапе ~90% готовности норма — разрыв около <span id="mth90"></span> п.п. Школы в таблице отстают от неё сильнее любого типового лага. Решение: по каждой — запросить у технического заказчика статус актов на этой неделе, не дожидаясь планового отчёта.</p>
+    <strong style="display:block;margin-top:20px;font-size:1.05rem">2. Красная зона: <span id="mthRedN"></span> школ отклоняются сильнее порога своего этапа</strong>
+    <p class="note">Порог считается отдельно на каждом этапе готовности: max(8, 0,75×IQR разрывов). На этапе ~90% норма разрыва — около <span id="mth90"></span> п.п. Школы в таблице отклоняются от нормы сильнее порога этапа. Пометка «типовой аванс» — % выплат застрял около размера аванса, это не прогресс по актам.</p>
     <div class="tbl-wrap" style="max-height:280px">
       <table class="full">
-        <thead><tr><th>Школа</th><th class="r">СГ</th><th class="r">Разрыв</th><th class="r">Норма для этапа</th><th class="r">Отклонение</th></tr></thead>
+        <thead><tr><th>Школа</th><th class="r">СГ</th><th class="r">Разрыв</th><th class="r">Норма</th><th class="r">Порог</th><th class="r">Отклонение</th><th></th></tr></thead>
         <tbody id="redZoneTbl"></tbody>
       </table>
     </div>
@@ -987,23 +1063,21 @@ METHOD_BODY = r"""
       <li>Нет истории по годам: неизвестно, типична ли пробуксовка в начале года — возможно, часть объектов обычно нагоняет в четвёртом квартале, и тогда часть «красной зоны» — не риск, а сезонность.</li>
       <li>Нет данных об условиях контрактов (штрафы, порядок расторжения) — непонятно, какие реальные рычаги есть на переговорах с проблемными подрядчиками.</li>
       <li>Список подрядчиков и бюджет 2026 года сверены вручную один раз по состоянию на начало сентября — при обновлении отчёта их нужно сверять заново, автоматически это не пересчитывается.</li>
-      <li>Порог красной зоны (отклонение 15+ п.п.) — эвристика по видимому разрыву в данных, а не статистически откалиброванный норматив: выборка в 48 объектов для этого небольшая. Три конкретных предложения, как это поправить, — ниже.</li>
+      <li>Порог красной зоны — свой на каждый этап (0,75×IQR, не меньше 8 п.п.), а не фиксированные 15 п.п. Эталонная кривая дублируется с весом по контракту. Объекты с «круглым» % выплат около типового аванса помечены отдельно.</li>
     </ul>
 
-    <strong style="display:block;margin-top:24px;font-size:1.1rem">Предложения на рассмотрении — пока не реализовано</strong>
-    <p class="note">Ниже — не готовые доработки, а варианты, которые меняют уже опубликованные цифры (список красной зоны, эталонную кривую). Прежде чем считать, стоит решить, нужны ли они вообще.</p>
-
-    <div class="box review">
-      <span class="stub-label review">На рассмотрении</span>
-      <p class="note" style="margin-top:8px"><strong>Порог красной зоны — свой на каждый этап, а не 15 п.п. на все.</strong> Сейчас порог один и тот же на этапе 10% готовности и на этапе 90%, а разброс между школами на этих этапах разный: на старте у всех типовой аванс — почти нет разброса, поэтому отклонение на 15 п.п. там действительно странно. Ближе к концу школы естественно расходятся по темпу закрытия актов — разброс шире, и то же отклонение в 15 п.п. там может быть нормой, а не сигналом. Итог: сейчас порог слишком мягкий в конце (пропускает в «красную зону» обычные школы) и слишком строгий в начале (может не заметить реальную проблему). Предложение — считать «типичный разброс» отдельно для каждого этапа и звать красной зоной отклонение от него, а не фиксированное число процентных пунктов.</p>
+    <strong style="display:block;margin-top:24px;font-size:1.1rem">Как считается красная зона и эталон</strong>
+    <div class="box done">
+      <span class="stub-label done">Сделано</span>
+      <p class="note" style="margin-top:8px"><strong>Порог по этапу.</strong> Для каждого этапа готовности берём разброс разрывов СГ−выплаты (IQR) и ставим порог max(8, 0,75×IQR). Красная зона — отклонение от медианы этапа выше этого порога.</p>
     </div>
-    <div class="box review">
-      <span class="stub-label review">На рассмотрении</span>
-      <p class="note" style="margin-top:8px"><strong>Вторая эталонная кривая — с весом по объёму контракта.</strong> Сейчас медиана разрыва на каждом этапе считается по школам поровну: школа на 90 млн ₽ и школа на 870 млн ₽ — по одному голосу каждая. Для казначейства это не совсем то же самое: отклонение у крупного контракта — это в разы больше денег на риске. Предложение — считать вторую кривую, где крупные контракты весят больше, то есть она отвечает на вопрос «как обычно ведёт себя типичный рубль в портфеле», а не «как обычно ведёт себя типичная школа». Не замена текущей кривой, а вторая, рядом.</p>
+    <div class="box done">
+      <span class="stub-label done">Сделано</span>
+      <p class="note" style="margin-top:8px"><strong>Вторая эталонная кривая.</strong> Рядом с медианой «по школам» — взвешенная медиана по объёму контракта («типичный рубль портфеля»).</p>
     </div>
-    <div class="box review">
-      <span class="stub-label review">На рассмотрении</span>
-      <p class="note" style="margin-top:8px"><strong>Флаг «типовой аванс, не прогресс».</strong> На данных 2026 года кластер из ~10 школ показывает исполнение ровно 27,0–27,3% — это не совпадение, а типовой размер аванса по контракту, зафиксированный до всякого прогресса по актам. Такие школы сейчас не отличаются от тех, где процент — результат реальных начислений, а не факта, что акт просто ещё не подавался. Предложение — помечать объекты с «круглым» % исполнения, совпадающим с типовым авансом, отдельным флагом «не показательно», чтобы не путать с реальным прогрессом при чтении таблиц и красной зоны.</p>
+    <div class="box done">
+      <span class="stub-label done">Сделано</span>
+      <p class="note" style="margin-top:8px"><strong>Флаг «типовой аванс».</strong> % выплат в полосе 26,5–27,5% или совпадение с долей аванса при нулевых платежах по актам. На дашборде — отдельный фильтр.</p>
     </div>
   </div>
 """
@@ -1032,6 +1106,7 @@ DASHBOARD_BODY = r"""
       <button class="fbtn" data-f="nobudget">0% освоения 2026</button>
       <button class="fbtn" data-f="expfail">Экспертиза отклонена/на пересмотре</button>
       <button class="fbtn" data-f="urgent">Просрочен сильнее типового + кредитует</button>
+      <button class="fbtn" data-f="advance">Типовой аванс</button>
     </div>
 
     <strong style="display:block;margin:18px 0 4px">Матрица риска: готовность vs оплата</strong>
@@ -1125,6 +1200,7 @@ function passesFilter(o) {
   if (activeFilter==='nobudget') return o.flags && o.flags.includes('не осваивает бюджет 2026');
   if (activeFilter==='expfail') return o.exp_last_result==='Отрицательное' || o.exp_pending;
   if (activeFilter==='urgent') return o.urgent_risk;
+  if (activeFilter==='advance') return o.advance_stuck;
   return true;
 }
 
@@ -1138,7 +1214,7 @@ function renderObjTbl() {
     else if (o.exp_pending) overrun = '<span class="pill warn">на пересмотре</span>';
     else if (o.exp_last_result==='Положительное' && !o.sd_confirmed) overrun = '<span class="pill warn">СД не подтверждена</span>';
     else overrun = o.exp_overrun!=null ? (o.exp_overrun>5 ? `<span class="pill warn">+${o.exp_overrun}%</span>` : o.exp_overrun+'%') : (o.entered_exp?'без удорожания':'не зашла');
-    return `<tr class="clickable" data-uin="${o.uin}"><td title="${o.full}">${o.name}</td><td>${o.municipality||'—'}</td><td>${o.contractor||'—'}</td><td>${o.rp||'—'}</td>` +
+    return `<tr class="clickable" data-uin="${o.uin}"><td title="${o.full}">${o.name}${o.advance_stuck?' <span class="flag">аванс</span>':''}</td><td>${o.municipality||'—'}</td><td>${o.contractor||'—'}</td><td>${o.rp||'—'}</td>` +
       `<td class="r">${o.contract_value??'—'}</td><td class="r">${o.sg}%</td><td class="r">${o.pct??'—'}%</td>` +
       `<td class="r">${moneyCell(o.gap_rub)}</td><td><span class="pill ${STATUS_PILL[o.money_status]}">${STATUS_LABEL[o.money_status]}</span></td><td>${overdue}</td><td class="r">${overrun}</td></tr>`;
   }).join('');
@@ -1257,8 +1333,8 @@ function drawTraj(uin) {
   document.getElementById('ktLine').textContent = `Экспертиза ${k.exp_sl||k.exp_plan||'—'}, СМР с ${k.smr_start||'—'}, контракт ${k.ctr_fact||'—'}` + (m&&m.flags?.length ? '. '+m.flags.join(', ') : '');
   const annotations = {};
   if (k.exp_marker) {
-    annotations.exp = { type:'line', xMin:k.exp_marker, xMax:k.exp_marker, borderColor:'#a04ea3', borderWidth:2, borderDash:[3,3],
-      label:{ display:true, content:'Экспертиза', position:'start', backgroundColor:'#a04ea3', font:{size:10} } };
+    annotations.exp = { type:'line', xMin:k.exp_marker, xMax:k.exp_marker, borderColor:'#2E7CC4', borderWidth:2, borderDash:[3,3],
+      label:{ display:true, content:'Экспертиза', position:'start', backgroundColor:'#2E7CC4', font:{size:10} } };
   }
   const cfg = { type:'line', data:{ labels:rows.map(r=>r.d), datasets:[
     { label:'Факт', data:rows.map(r=>r.sg), borderColor:blue, tension:.25, pointRadius:2 },
@@ -1322,8 +1398,8 @@ document.getElementById('contractorsTbl').innerHTML = DATA.contractors.map(c => 
   return `<tr${allStuck ? ' style="background:var(--err-bg)"' : ''}><td>${c.contractor}</td><td class="r">${c.objects.length}</td><td class="r">${c.n_no_budget2026 || '—'}</td><td>${objs}</td></tr>`;
 }).join('');
 
-document.getElementById('redZoneTbl').innerHTML = DATA.red_zone.filter(s=>s.deviation>15).map(s =>
-  `<tr><td title="${s.full}">${s.name}</td><td class="r">${s.sg}%</td><td class="r">${s.gap}</td><td class="r">${s.stage_median}</td><td class="r">+${s.deviation}</td></tr>`
+document.getElementById('redZoneTbl').innerHTML = DATA.red_zone.filter(s=>s.in_red).map(s =>
+  `<tr><td title="${s.full}">${s.name}</td><td class="r">${s.sg}%</td><td class="r">${s.gap}</td><td class="r">${s.stage_median}</td><td class="r">${s.threshold}</td><td class="r">+${s.deviation}</td><td>${s.advance_stuck?'<span class="flag">типовой аванс</span>':'—'}</td></tr>`
 ).join('');
 
 document.getElementById('advOnlyN').textContent = DATA.advance_only.length;
@@ -1348,16 +1424,20 @@ function initStage() {
   new Chart(document.getElementById('cStage'), {
     type:'line',
     data:{ labels:s.map(x=>x.stage+'%'), datasets:[
-      { label:'СГ обгоняет выплаты, п.п.', data:s.map(x=>x.pay_gap), borderColor:green, backgroundColor:green, tension:.2, pointRadius:4 },
+      { label:'По школам (медиана)', data:s.map(x=>x.pay_gap), borderColor:green, backgroundColor:green, tension:.2, pointRadius:4 },
+      { label:'По рублям (вес контракта)', data:s.map(x=>x.pay_gap_w), borderColor:green, borderDash:[6,4], tension:.2, pointRadius:3, pointStyle:'rect' },
       { label:'Факт отстаёт от плана, п.п.', data:s.map(x=>x.plan_gap), borderColor:blue, backgroundColor:blue, borderDash:[5,4], tension:.2, pointRadius:4 }
     ]},
     options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}, datalabels:{display:false},
-      tooltip:{callbacks:{afterLabel:c=>'школ на этом этапе: '+s[c.dataIndex].n}}},
+      tooltip:{callbacks:{afterLabel:c=>{
+        const row = s[c.dataIndex];
+        return 'школ: '+row.n+(row.threshold!=null ? ', порог красной зоны: '+row.threshold+' п.п.' : '');
+      }}}},
       scales:{ x:{title:{display:true,text:'Этап готовности (СГ)'}}, y:{title:{display:true,text:'Разрыв, п.п.'}} } }
   });
   const first = s.find(x=>x.n>=10), last = [...s].reverse().find(x=>x.n>=10);
   document.getElementById('stageNote').textContent = first && last
-    ? `На старте (${first.stage}% готовности) деньги опережают стройку на ${Math.abs(first.pay_gap)} п.п. — это аванс. К ${last.stage}% готовности стройка опережает деньги уже на ${last.pay_gap} п.п., и разрыв растёт быстрее всего после 60–70% готовности. С планом — обратная картина: сильнее всего школы отстают от собственного графика в середине стройки, а к концу почти нагоняют.`
+    ? `На старте (${first.stage}% готовности) деньги опережают стройку на ${Math.abs(first.pay_gap)} п.п. — это аванс. К ${last.stage}% готовности стройка опережает деньги уже на ${last.pay_gap} п.п. (по рублям: ${last.pay_gap_w??'—'}). Порог красной зоны на ${last.stage}% — ${last.threshold} п.п.`
     : '';
 }
 
@@ -1397,7 +1477,7 @@ initMethod();
 def main():
     payload = load_data()
     data_json = json.dumps(payload, ensure_ascii=False)
-    sub = "48 школ, обновлено 07.09.2026"
+    sub = "48 школ, обновлено 14.09.2026"
 
     method_html = (
         HEAD_STYLE.replace("__TITLE__", "СГ и выплаты — методика")
