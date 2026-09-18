@@ -5,7 +5,7 @@ import json
 import math
 import re
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import openpyxl
@@ -170,6 +170,20 @@ def linreg(xs, ys):
 
 def fmt_date(d):
     return d.strftime("%d.%m.%y") if d else None
+
+
+def add_workdays(start, n):
+    """Прибавить n рабочих дней (пн–пт; без праздников РФ)."""
+    if not start or n is None:
+        return None
+    cur = start
+    left = abs(int(n))
+    step = 1 if int(n) >= 0 else -1
+    while left > 0:
+        cur += timedelta(days=step)
+        if cur.weekday() < 5:
+            left -= 1
+    return cur
 
 
 def kt_bounds(items):
@@ -614,6 +628,20 @@ def load_data():
             else None
         )
 
+        # Сроки экспертизы из Simple List; регламентный выход = старт/заход + 42 раб. дня.
+        exp_in_dt = info.get("exp_in")
+        exp_start_dt = info.get("exp_start")
+        exp_done_dt = info.get("exp_done")
+        exp_base_dt = exp_start_dt or exp_in_dt
+        exp_due_dt = add_workdays(exp_base_dt, 42)
+        today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        exp_due_over = False
+        if exp_due_dt:
+            if exp_done_dt and exp_done_dt.date() > exp_due_dt.date():
+                exp_due_over = True
+            elif not exp_done_dt and today.date() > exp_due_dt.date():
+                exp_due_over = True
+
         kt_rows.append(
             {
                 "uin": uin,
@@ -635,6 +663,11 @@ def load_data():
                 "exp_plan_mln": exp_plan_mln,
                 "exp_agreed_mln": exp_agreed_mln,
                 "exp_delta_mln": exp_delta_mln,
+                "exp_in": fmt_date(exp_in_dt),
+                "exp_start": fmt_date(exp_start_dt),
+                "exp_done": fmt_date(exp_done_dt),
+                "exp_due": fmt_date(exp_due_dt),
+                "exp_due_over": exp_due_over,
                 "entered_exp": info.get("entered_exp", False),
                 "opening_plan": fmt_date(opening_plan),
                 "days_to_open": days_to_open,
@@ -992,6 +1025,9 @@ HEAD_STYLE = r"""<!DOCTYPE html>
   table.dense .stack .main { font-weight:600; display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
   table.dense .stack .sub { font-size:.74rem; color:var(--muted); display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
   table.dense .stack .uin { font-size:.68rem; color:var(--faint); font-variant-numeric:tabular-nums; display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+  table.dense .dates { font-size:.68rem; line-height:1.35; color:var(--muted); white-space:nowrap }
+  table.dense .dates b { color:var(--text); font-weight:600 }
+  table.dense .dates .late { color:#A32E2E; font-weight:600 }
   table.dense .pill { font-size:.7rem; padding:2px 7px; gap:4px; white-space:nowrap }
   table.dense .pill.ok::before, table.dense .pill.warn::before, table.dense .pill.err::before { width:5px; height:5px }
   table.dense .flag { font-size:.65rem; padding:1px 5px; margin:0 0 0 3px }
@@ -1247,9 +1283,9 @@ DASHBOARD_BODY = r"""
     <div class="tbl-wrap fit" style="max-height:420px">
       <table class="full dense" id="objectsTable">
         <colgroup>
-          <col style="width:28%"><col style="width:10%">
-          <col style="width:7%"><col style="width:5%"><col style="width:5%"><col style="width:8%">
-          <col style="width:10%"><col style="width:8%"><col style="width:8%"><col style="width:11%">
+          <col style="width:22%"><col style="width:8%">
+          <col style="width:6%"><col style="width:4%"><col style="width:4%"><col style="width:7%">
+          <col style="width:8%"><col style="width:7%"><col style="width:7%"><col style="width:14%"><col style="width:13%">
         </colgroup>
         <thead><tr>
           <th>Объект / подрядчик / УИН</th><th>Округ</th>
@@ -1258,12 +1294,13 @@ DASHBOARD_BODY = r"""
           <th class="r" title="Разница СГ−оплата, млн ₽">Δ, млн</th>
           <th>Статус</th><th>Ввод</th>
           <th class="r" title="ТЧ — техчасть, СД — смета">Эксп.</th>
+          <th title="Заход, получение заключения и регламентный выход (+42 раб. дня от начала/захода)">Сроки эксп.</th>
           <th class="r" title="Согласованная стоимость после экспертизы, млн ₽, и изменение к плановой">После эксп.</th>
         </tr></thead>
         <tbody id="objTbl"></tbody>
       </table>
     </div>
-    <p class="note">«После эксп.» — согласованная сумма после экспертизы и изменение к плановой (%). Клик — «Один объект».</p>
+    <p class="note">«Сроки эксп.»: заход, получение заключения, регламентный выход (+42 раб. дня от начала экспертизы, иначе от захода; без праздников РФ). «После эксп.» — согласованная сумма и % к плановой.</p>
   </div>
 
   <div class="tabpanel" data-tab="contractors" hidden>
@@ -1414,6 +1451,13 @@ function renderObjTbl() {
     const smeta = after==null
       ? '—'
       : `<span class="money ${o.exp_overrun>0?'pos':(o.exp_overrun<0?'neg':'')}" title="${afterTip}">${after.toLocaleString('ru-RU')}${pct ? ' ('+pct+')' : ''}</span>`;
+    const dueLate = o.exp_due_over;
+    const dates = (!o.exp_in && !o.exp_done && !o.exp_due)
+      ? '—'
+      : `<div class="dates" title="заход → получение заключения; регламент = +42 раб. дня от начала экспертизы (или захода)">` +
+        `<div>заход <b>${o.exp_in||'—'}</b></div>` +
+        `<div>получено <b>${o.exp_done||'—'}</b></div>` +
+        `<div>регламент <b class="${dueLate?'late':''}">${o.exp_due||'—'}</b>${dueLate?' ⚠':''}</div></div>`;
     const tip = [o.full, o.rp ? 'РП: '+o.rp : '', o.contractor||'', 'УИН: '+o.uin].filter(Boolean).join(' · ');
     const stack = `<div class="stack" title="${tip}">` +
       `<span class="main">${o.name}${o.advance_stuck?' <span class="flag">аванс</span>':''}</span>` +
@@ -1425,7 +1469,7 @@ function renderObjTbl() {
       `<td class="r">${o.contract_value??'—'}</td><td class="r">${o.sg}%</td><td class="r">${o.pct??'—'}%</td>` +
       `<td class="r">${moneyCell(o.gap_rub)}</td>` +
       `<td><span class="pill ${STATUS_PILL[o.money_status]}" title="${STATUS_LABEL[o.money_status]}">${STATUS_SHORT[o.money_status]}</span></td>` +
-      `<td>${overdue}</td><td class="r">${overrun}</td><td class="r">${smeta}</td></tr>`;
+      `<td>${overdue}</td><td class="r">${overrun}</td><td>${dates}</td><td class="r">${smeta}</td></tr>`;
   }).join('');
   document.querySelectorAll('#objTbl tr.clickable').forEach(tr => tr.onclick = () => {
     sel.value = tr.dataset.uin;
