@@ -1313,13 +1313,13 @@ DASHBOARD_BODY = r"""
 
   <div class="tabpanel" data-tab="contractors" hidden>
     <strong style="display:block;margin-top:4px;margin-bottom:8px">Подрядчики: портфель и финансирование</strong>
-    <p class="note" style="margin-top:0">По подрядчику: контракты за весь срок и лимит финансирования на 2026 год — сколько уже освоено и сколько осталось. «Кредитует» — построено сверх оплаты. Клик — состав портфеля ниже.</p>
+    <p class="note" style="margin-top:0">По подрядчику: контракты за весь срок и лимит финансирования на 2026 год — сколько уже освоено и сколько осталось. «Кредитует» — построено сверх оплаты; «Доля риска» — какой % этой суммы по портфелю у него. Клик — состав портфеля ниже.</p>
     <div class="tbl-wrap">
       <table class="full dense" id="contrTable">
         <colgroup>
-          <col style="width:22%"><col style="width:8%">
-          <col style="width:12%"><col style="width:16%"><col style="width:12%">
-          <col style="width:12%"><col style="width:10%"><col style="width:8%">
+          <col style="width:20%"><col style="width:7%">
+          <col style="width:11%"><col style="width:14%"><col style="width:11%">
+          <col style="width:11%"><col style="width:10%"><col style="width:8%"><col style="width:8%">
         </colgroup>
         <thead><tr>
           <th>Подрядчик</th>
@@ -1329,6 +1329,7 @@ DASHBOARD_BODY = r"""
           <th class="r" title="Сколько из финансирования 2026 уже освоено">Освоено в 2026, млн ₽</th>
           <th class="r" title="Финансирование 2026 минус освоено">Остаток 2026, млн ₽</th>
           <th class="r" title="Сколько построено сверх оплаты">Кредитует, млн ₽</th>
+          <th class="r" title="Доля этого подрядчика в сумме кредитования по всему портфелю">Доля риска</th>
           <th class="r" title="Сколько объектов с нулевым освоением бюджета 2026">С нулевым освоением</th>
         </tr></thead>
         <tbody id="contrRollup"></tbody>
@@ -1536,16 +1537,20 @@ function renderRollup() {
     if (plan && o.osv2026_pct != null) e.osv2026 += plan * Number(o.osv2026_pct) / 100;
     if (o.flags && o.flags.includes('не осваивает бюджет 2026')) e.no_budget2026++;
   });
-  const rows = Object.values(byC).sort((a,b) => (b.plan2026 - a.plan2026) || (b.credit - a.credit));
+  const rows = Object.values(byC).sort((a,b) => (b.credit - a.credit) || (b.plan2026 - a.plan2026));
+  const totalCredit = rows.reduce((s,c) => s + Math.max(0, c.credit), 0);
   document.getElementById('contrRollup').innerHTML = rows.map(c => {
     const remain = Math.max(0, c.plan2026 - c.osv2026);
     const creditTxt = c.credit > 0 ? Math.round(c.credit).toLocaleString('ru-RU') : '—';
+    const shareTxt = totalCredit > 0 && c.credit > 0
+      ? (Math.round(c.credit / totalCredit * 1000) / 10).toLocaleString('ru-RU') + '%'
+      : '—';
     return `<tr class="clickable${activeContractor===c.contractor?' row-active':''}" data-c="${c.contractor}">` +
       `<td>${c.contractor}</td><td class="r">${c.n}</td><td class="r">${Math.round(c.contract).toLocaleString('ru-RU')}</td>` +
       `<td class="r">${Math.round(c.plan2026).toLocaleString('ru-RU')}</td>` +
       `<td class="r">${Math.round(c.osv2026).toLocaleString('ru-RU')}</td>` +
       `<td class="r">${Math.round(remain).toLocaleString('ru-RU')}</td>` +
-      `<td class="r">${creditTxt}</td><td class="r">${c.no_budget2026||'—'}</td></tr>`;
+      `<td class="r">${creditTxt}</td><td class="r">${shareTxt}</td><td class="r">${c.no_budget2026||'—'}</td></tr>`;
   }).join('');
   document.querySelectorAll('#contrRollup tr.clickable').forEach(tr => tr.onclick = () => {
     activeContractor = activeContractor === tr.dataset.c ? null : tr.dataset.c;
