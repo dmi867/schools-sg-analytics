@@ -21,7 +21,7 @@
   }
   * { box-sizing:border-box }
   body { margin:0; font:15px/1.55 'Golos Text','Manrope',system-ui,sans-serif; background:var(--bg); color:var(--text); letter-spacing:-.01em }
-  .wrap { max-width:1440px; margin:0 auto; padding:28px 18px 56px }
+  .wrap { max-width:1520px; margin:0 auto; padding:28px 18px 56px }
   h1 { font-size:1.65rem; font-weight:700; margin:0 0 4px; letter-spacing:-.02em; color:var(--navy) }
   .sub { color:var(--muted); margin:0 0 20px; font-size:.92rem }
   .brand { display:block; height:34px; margin-bottom:14px }
@@ -55,6 +55,15 @@
   table.full th { background:#EAF0F5; position:sticky; top:0; text-align:left; color:var(--faint); font-weight:600; font-size:.72rem; letter-spacing:.04em; text-transform:uppercase }
   table.full td.r,table.full th.r { text-align:right; font-variant-numeric:tabular-nums }
   .tbl-wrap { max-height:420px; overflow:auto; border:1px solid var(--line); border-radius:10px; margin-top:10px }
+  .tbl-wrap.fit { overflow-x:hidden }
+  table.dense { table-layout:fixed; width:100%; font-size:.74rem }
+  table.dense th,table.dense td { padding:5px 5px; vertical-align:middle }
+  table.dense th { font-size:.64rem; letter-spacing:.02em; white-space:nowrap }
+  table.dense .clip { overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+  table.dense .pill { font-size:.64rem; padding:1px 6px; gap:3px; white-space:nowrap }
+  table.dense .pill.ok::before, table.dense .pill.warn::before, table.dense .pill.err::before { width:5px; height:5px }
+  table.dense .flag { font-size:.6rem; padding:0 4px; margin:0 0 0 3px }
+  table.dense .money { font-size:.74rem }
   .flag { font-size:.72rem; padding:2px 7px; margin:1px 2px 1px 0; display:inline-block; background:var(--warn-bg); border:1px solid #EFCB84; border-radius:5px; color:#8A5E10 }
   .flag.warn { background:var(--err-bg); border-color:#F0B3B3; color:#A32E2E }
   .pill { display:inline-block; font-size:.72rem; font-weight:600; padding:2px 9px; border-radius:99px }
@@ -181,20 +190,26 @@
       <div class="chart" style="height:520px;margin:0"><canvas id="cMatrix"></canvas></div>
     </div>
 
-    <div class="tbl-wrap" style="max-height:520px">
-      <table class="full">
+    <div class="tbl-wrap fit" style="max-height:520px">
+      <table class="full dense" id="objectsTable">
+        <colgroup>
+          <col style="width:14%"><col style="width:9%"><col style="width:13%">
+          <col style="width:6%"><col style="width:5%"><col style="width:5%"><col style="width:7%">
+          <col style="width:8%"><col style="width:7%"><col style="width:8%"><col style="width:18%">
+        </colgroup>
         <thead><tr>
-          <th>Школа</th><th>Округ</th><th>Подрядчик</th><th>РП</th><th class="r">Контракт, млн ₽</th>
-          <th class="r">СГ</th><th class="r">Оплата</th><th class="r">Разница, млн ₽</th><th>Статус</th><th>Ввод</th>
-          <th class="r" title="ТЧ — техчасть экспертизы, СД — смета">Экспертиза</th>
-          <th class="r" title="(согласованная − плановая) / плановая стоимость объекта экспертизы">Удорожание, %</th>
-          <th class="r" title="Согласованная − плановая стоимость объекта экспертизы">Удорожание, млн ₽</th>
-          <th class="r" title="Согласованная стоимость объекта экспертизы">После удорожания, млн ₽</th>
+          <th>Школа</th><th>Округ</th><th>Подрядчик</th>
+          <th class="r" title="Контракт, млн ₽">Контр.</th>
+          <th class="r">СГ</th><th class="r" title="Оплата, %">Опл.</th>
+          <th class="r" title="Разница СГ−оплата, млн ₽">Δ, млн</th>
+          <th>Статус</th><th>Ввод</th>
+          <th class="r" title="ТЧ — техчасть, СД — смета">Эксп.</th>
+          <th class="r" title="Удорожание: % · млн ₽ → согласованная смета">Смета после эксп.</th>
         </tr></thead>
         <tbody id="objTbl"></tbody>
       </table>
     </div>
-    <p class="note">Таблица по убыванию недоплаты подрядчику (разница). Клик по строке — вкладка «Один объект». Экспертиза: <span class="pill ok">ТЧ+СД</span> оба ок, <span class="pill ok">ТЧ</span> только техчасть (сметы нет), <span class="pill err">ТЧ отклонена</span>, <span class="pill warn">в экспертизе</span>. Удорожание — из плановой и согласованной стоимости экспертизы в Simple List (пусто, если сметы ещё нет).</p>
+    <p class="note">Без горизонтальной прокрутки: длинные названия обрезаны (наведите — полное). Сортировка по недоплате подрядчику. «Смета после эксп.»: % удорожания · сумма → согласованная. Клик по строке — «Один объект».</p>
   </div>
 
   <div class="tabpanel" data-tab="contractors" hidden>
@@ -259,6 +274,7 @@ const DATA = {"stats": {"n": 47, "n_objects": 48, "contract_mld": 24.54, "plan20
 const blue='#126880', blueL='rgba(18,104,128,.35)', green='#27AE60';
 
 const STATUS_LABEL = { over:'Избыток оплаты', credit:'Кредитует подрядчик', balanced:'Баланс', unknown:'Нет данных' };
+const STATUS_SHORT = { over:'Избыток', credit:'Кредитует', balanced:'Баланс', unknown:'—' };
 const STATUS_PILL = { over:'err', credit:'warn', balanced:'ok', unknown:'' };
 function moneyCell(v) {
   if (v==null) return '—';
@@ -313,24 +329,38 @@ function renderObjTbl() {
     .sort((a,b) => (a.gap_rub||0) - (b.gap_rub||0));
   document.getElementById('objTbl').innerHTML = rows.map(o => {
     const days = o.days_to_open;
-    const overdue = days!=null ? (days<0 ? `<span class="pill err">просрочка ${Math.abs(days)} дн.</span>` : `<span class="pill ok">осталось ${days} дн.</span>`) : '—';
+    const overdue = days!=null
+      ? (days<0
+        ? `<span class="pill err" title="просрочка ${Math.abs(days)} дн.">−${Math.abs(days)} дн.</span>`
+        : `<span class="pill ok" title="осталось ${days} дн.">+${days} дн.</span>`)
+      : '—';
     let overrun;
     if (o.exp_last_result==='Отрицательное') {
-      overrun = '<span class="pill-pair"><span class="pill err" title="Отрицательное заключение экспертизы">ТЧ отклонена</span></span>';
+      overrun = '<span class="pill err" title="Отрицательное заключение">откл.</span>';
     } else if (o.exp_pending) {
-      overrun = '<span class="pill-pair"><span class="pill warn" title="Заявка ещё открыта: замечания, рассмотрение ПД и т.п.">в экспертизе</span></span>';
+      overrun = '<span class="pill warn" title="Заявка ещё открыта">в эксп.</span>';
     } else if (o.exp_last_result==='Положительное' && o.sd_confirmed) {
-      overrun = '<span class="pill-pair"><span class="pill ok" title="Техчасть и смета подтверждены">ТЧ+СД</span></span>';
+      overrun = '<span class="pill ok" title="Техчасть и смета">ТЧ+СД</span>';
     } else if (o.exp_last_result==='Положительное' && !o.sd_confirmed) {
-      overrun = '<span class="pill-pair"><span class="pill ok" title="Техчасть ок, смета ещё не согласована">ТЧ</span></span>';
+      overrun = '<span class="pill ok" title="Техчасть ок, сметы нет">ТЧ</span>';
     } else {
-      overrun = o.entered_exp ? '<span class="pill warn">без заключения</span>' : '—';
+      overrun = o.entered_exp ? '<span class="pill warn">нет закл.</span>' : '—';
     }
-    const overrunPct = o.exp_overrun!=null ? `<span class="money ${o.exp_overrun>0?'pos':(o.exp_overrun<0?'neg':'')}">${o.exp_overrun>0?'+':''}${o.exp_overrun}%</span>` : '—';
-    return `<tr class="clickable" data-uin="${o.uin}"><td title="${o.full}">${o.name}${o.advance_stuck?' <span class="flag">аванс</span>':''}</td><td>${o.municipality||'—'}</td><td>${o.contractor||'—'}</td><td>${o.rp||'—'}</td>` +
+    const pct = o.exp_overrun!=null ? `${o.exp_overrun>0?'+':''}${o.exp_overrun}%` : '—';
+    const delta = o.exp_delta_mln!=null ? `${o.exp_delta_mln>0?'+':''}${o.exp_delta_mln}` : '—';
+    const after = o.exp_agreed_mln!=null ? o.exp_agreed_mln : '—';
+    const smeta = (o.exp_overrun==null && o.exp_delta_mln==null && o.exp_agreed_mln==null)
+      ? '—'
+      : `<span class="money ${o.exp_overrun>0?'pos':(o.exp_overrun<0?'neg':'')}" title="удорожание % · млн → согласованная">${pct} · ${delta} → ${after}</span>`;
+    const tip = [o.full, o.rp ? 'РП: '+o.rp : '', o.contractor||''].filter(Boolean).join(' · ');
+    return `<tr class="clickable" data-uin="${o.uin}">` +
+      `<td class="clip" title="${tip}">${o.name}${o.advance_stuck?' <span class="flag">аванс</span>':''}</td>` +
+      `<td class="clip" title="${o.municipality||''}">${o.municipality||'—'}</td>` +
+      `<td class="clip" title="${o.contractor||''}">${o.contractor||'—'}</td>` +
       `<td class="r">${o.contract_value??'—'}</td><td class="r">${o.sg}%</td><td class="r">${o.pct??'—'}%</td>` +
-      `<td class="r">${moneyCell(o.gap_rub)}</td><td><span class="pill ${STATUS_PILL[o.money_status]}">${STATUS_LABEL[o.money_status]}</span></td><td>${overdue}</td><td class="r">${overrun}</td>` +
-      `<td class="r">${overrunPct}</td><td class="r">${moneyCell(o.exp_delta_mln)}</td><td class="r">${o.exp_agreed_mln??'—'}</td></tr>`;
+      `<td class="r">${moneyCell(o.gap_rub)}</td>` +
+      `<td><span class="pill ${STATUS_PILL[o.money_status]}" title="${STATUS_LABEL[o.money_status]}">${STATUS_SHORT[o.money_status]}</span></td>` +
+      `<td>${overdue}</td><td class="r">${overrun}</td><td class="r clip">${smeta}</td></tr>`;
   }).join('');
   document.querySelectorAll('#objTbl tr.clickable').forEach(tr => tr.onclick = () => {
     sel.value = tr.dataset.uin;
