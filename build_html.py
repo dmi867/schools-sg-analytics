@@ -1247,23 +1247,23 @@ DASHBOARD_BODY = r"""
     <div class="tbl-wrap fit" style="max-height:420px">
       <table class="full dense" id="objectsTable">
         <colgroup>
-          <col style="width:28%"><col style="width:9%">
+          <col style="width:28%"><col style="width:10%">
           <col style="width:7%"><col style="width:5%"><col style="width:5%"><col style="width:8%">
-          <col style="width:9%"><col style="width:8%"><col style="width:8%"><col style="width:13%">
+          <col style="width:10%"><col style="width:8%"><col style="width:8%"><col style="width:11%">
         </colgroup>
         <thead><tr>
           <th>Объект / подрядчик / УИН</th><th>Округ</th>
-          <th class="r" title="Контракт, млн ₽">Контр.</th>
+          <th class="r" title="Цена контракта (весь срок), млн ₽">Контракт</th>
           <th class="r">СГ</th><th class="r" title="Оплата, %">Опл.</th>
           <th class="r" title="Разница СГ−оплата, млн ₽">Δ, млн</th>
           <th>Статус</th><th>Ввод</th>
           <th class="r" title="ТЧ — техчасть, СД — смета">Эксп.</th>
-          <th class="r" title="Удорожание: % · млн ₽ → согласованная смета">Смета</th>
+          <th class="r" title="Согласованная стоимость после экспертизы, млн ₽, и изменение к плановой">После эксп.</th>
         </tr></thead>
         <tbody id="objTbl"></tbody>
       </table>
     </div>
-    <p class="note">Школа, подрядчик и УИН — в одной колонке. Сортировка по недоплате. «Смета»: % · млн → согласованная. Клик — «Один объект».</p>
+    <p class="note">«После эксп.» — согласованная сумма после экспертизы и изменение к плановой (%). Клик — «Один объект».</p>
   </div>
 
   <div class="tabpanel" data-tab="contractors" hidden>
@@ -1402,12 +1402,11 @@ function renderObjTbl() {
     } else {
       overrun = o.entered_exp ? '<span class="pill warn">нет закл.</span>' : '—';
     }
-    const pct = o.exp_overrun!=null ? `${o.exp_overrun>0?'+':''}${o.exp_overrun}%` : '—';
-    const delta = o.exp_delta_mln!=null ? `${o.exp_delta_mln>0?'+':''}${o.exp_delta_mln}` : '—';
-    const after = o.exp_agreed_mln!=null ? o.exp_agreed_mln : '—';
-    const smeta = (o.exp_overrun==null && o.exp_delta_mln==null && o.exp_agreed_mln==null)
+    const pct = o.exp_overrun!=null ? `${o.exp_overrun>0?'+':''}${o.exp_overrun}%` : null;
+    const after = o.exp_agreed_mln;
+    const smeta = after==null
       ? '—'
-      : `<span class="money ${o.exp_overrun>0?'pos':(o.exp_overrun<0?'neg':'')}" title="удорожание % · млн → согласованная">${pct} · ${delta} → ${after}</span>`;
+      : `<span class="money ${o.exp_overrun>0?'pos':(o.exp_overrun<0?'neg':'')}" title="согласованная после экспертизы">${after.toLocaleString('ru-RU')}${pct ? ' ('+pct+')' : ''}</span>`;
     const tip = [o.full, o.rp ? 'РП: '+o.rp : '', o.contractor||'', 'УИН: '+o.uin].filter(Boolean).join(' · ');
     const stack = `<div class="stack" title="${tip}">` +
       `<span class="main">${o.name}${o.advance_stuck?' <span class="flag">аванс</span>':''}</span>` +
@@ -1419,7 +1418,7 @@ function renderObjTbl() {
       `<td class="r">${o.contract_value??'—'}</td><td class="r">${o.sg}%</td><td class="r">${o.pct??'—'}%</td>` +
       `<td class="r">${moneyCell(o.gap_rub)}</td>` +
       `<td><span class="pill ${STATUS_PILL[o.money_status]}" title="${STATUS_LABEL[o.money_status]}">${STATUS_SHORT[o.money_status]}</span></td>` +
-      `<td>${overdue}</td><td class="r">${overrun}</td><td class="r clip">${smeta}</td></tr>`;
+      `<td>${overdue}</td><td class="r">${overrun}</td><td class="r">${smeta}</td></tr>`;
   }).join('');
   document.querySelectorAll('#objTbl tr.clickable').forEach(tr => tr.onclick = () => {
     sel.value = tr.dataset.uin;
