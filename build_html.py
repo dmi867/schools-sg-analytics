@@ -858,6 +858,23 @@ def load_data():
     gaps = [s["gap"] for s in cross if s["gap"] is not None]
     kt_sorted = sorted(kt_rows, key=lambda x: (-x["flag_n"], -(x["sg_pay_gap"] or 0)))
 
+    # Портфельные KPI шапки: контракт + финансирование 2026 + освоение/остаток
+    # (см. разбор верхних блоков с заказчиком). osv2026 в finance2026 — % освоения плана.
+    plan2026_rub = 0.0
+    osv2026_rub = 0.0
+    for k in kt_rows:
+        fin = fin2026.get(k["uin"]) or {}
+        plan = float(fin.get("plan2026_rub") or 0)
+        osv_pct = fin.get("osv2026")
+        k["plan2026"] = round(plan / 1e6, 1) if plan else None
+        k["osv2026_pct"] = osv_pct
+        plan2026_rub += plan
+        if plan and osv_pct is not None:
+            osv2026_rub += plan * float(osv_pct) / 100.0
+    remain2026_rub = max(0.0, plan2026_rub - osv2026_rub)
+    contract_rub = sum((k.get("contract_value") or 0) * 1e6 for k in kt_rows)
+    credit_rub = sum(-(k["gap_rub"] or 0) for k in kt_rows if k["money_status"] == "credit" and (k["gap_rub"] or 0) < 0)
+
     no_adv = [s for s in valid if not s["advance"]]
     facts_na = [s["sg"] for s in no_adv]
     pcts_na = [s["pct"] for s in no_adv]
@@ -866,6 +883,13 @@ def load_data():
     return {
         "stats": {
             "n": len(valid),
+            "n_objects": len(kt_rows),
+            "contract_mld": round(contract_rub / 1e9, 2),
+            "plan2026_mld": round(plan2026_rub / 1e9, 2),
+            "osv2026_mld": round(osv2026_rub / 1e9, 2),
+            "osv2026_pct": round(osv2026_rub / plan2026_rub * 100, 1) if plan2026_rub else None,
+            "remain2026_mld": round(remain2026_rub / 1e9, 2),
+            "credit_mld": round(credit_rub / 1e9, 2),
             "median_r": round(median(rs_corr), 3) if rs_corr else 0,
             "n_varying": len(varying),
             "n_sg_ahead": sum(1 for g in gaps if g > 55),
@@ -975,8 +999,11 @@ HEAD_STYLE = r"""<!DOCTYPE html>
   .stub-label.done { color:var(--accent-d); background:var(--accent-dim); border-color:var(--accent-l) }
   .box.done { border-color:var(--accent-l); background:#F3FBFC }
   .kpis.four { grid-template-columns:repeat(4,1fr) }
-  @media(max-width:900px) { .kpis.four { grid-template-columns:repeat(2,1fr) } }
-  @media(max-width:700px) { .kpis,.kpis.four { grid-template-columns:1fr } }
+  .kpis.five { grid-template-columns:repeat(5,1fr) }
+  .kpi .sub { font-size:.78rem; color:var(--muted); margin-top:2px; font-variant-numeric:tabular-nums }
+  @media(max-width:1100px) { .kpis.five { grid-template-columns:repeat(3,1fr) } }
+  @media(max-width:900px) { .kpis.four,.kpis.five { grid-template-columns:repeat(2,1fr) } }
+  @media(max-width:700px) { .kpis,.kpis.four,.kpis.five { grid-template-columns:1fr } }
   .navlink { display:inline-block; margin:0 0 16px; font-size:.85rem; color:var(--accent-d); text-decoration:none; font-weight:600 }
   .navlink:hover { text-decoration:underline }
   .tabbar { display:flex; gap:4px; border-bottom:2px solid var(--line); margin:18px 0 20px }
@@ -1127,12 +1154,14 @@ METHOD_BODY = r"""
 DASHBOARD_BODY = r"""
   <p class="note" style="margin:0 0 14px">По каждому объекту: сколько денег получил подрядчик против того, сколько физически построил — в рублях по цене контракта, не в очках готовности. Если оплата обгоняет стройку — избыток (куда делись деньги, непонятно). Если стройка обгоняет оплату — подрядчик кредитует стройку сам, ему должны заплатить.</p>
 
-  <div class="kpis four">
-    <div class="kpi"><div class="n" id="dK1"></div><div class="l">объектов в портфеле</div></div>
-    <div class="kpi"><div class="n" id="dK2"></div><div class="l">суммарный контракт, млрд ₽</div></div>
-    <div class="kpi"><div class="n" id="dK3"></div><div class="l">подрядчики кредитуют, млрд ₽</div></div>
-    <div class="kpi"><div class="n" id="dK4"></div><div class="l">0% освоения бюджета 2026</div></div>
+  <div class="kpis five">
+    <div class="kpi"><div class="n" id="dK1"></div><div class="l">объектов</div></div>
+    <div class="kpi"><div class="n" id="dK2"></div><div class="l">контракт, млрд ₽</div></div>
+    <div class="kpi"><div class="n" id="dK3"></div><div class="l">финансирование 2026, млрд ₽</div></div>
+    <div class="kpi"><div class="n" id="dK4"></div><div class="sub" id="dK4sub"></div><div class="l">освоено в 2026, млрд ₽</div></div>
+    <div class="kpi"><div class="n" id="dK5"></div><div class="l">остаток 2026, млрд ₽</div></div>
   </div>
+  <p class="note" id="dKpiNote" style="margin-top:8px"></p>
 
   <div class="tabbar" id="tabBar">
     <button class="tabbtn active" data-tab="objects">Объекты</button>
@@ -1237,10 +1266,16 @@ function moneyCell(v) {
   return `<span class="money ${cls}">${v>0?'+':''}${v.toLocaleString('ru-RU')}</span>`;
 }
 
-document.getElementById('dK1').textContent = DATA.objects.length;
-document.getElementById('dK2').textContent = (DATA.objects.reduce((s,o)=>s+(o.contract_value||0),0)/1000).toFixed(1);
-document.getElementById('dK3').textContent = (-DATA.objects.filter(o=>o.money_status==='credit').reduce((s,o)=>s+(o.gap_rub||0),0)/1000).toFixed(1);
-document.getElementById('dK4').textContent = DATA.objects.filter(o=>o.flags && o.flags.includes('не осваивает бюджет 2026')).length;
+const S = DATA.stats;
+document.getElementById('dK1').textContent = S.n_objects || DATA.objects.length;
+document.getElementById('dK2').textContent = (S.contract_mld ?? 0).toLocaleString('ru-RU');
+document.getElementById('dK3').textContent = (S.plan2026_mld ?? 0).toLocaleString('ru-RU');
+document.getElementById('dK4').textContent = (S.osv2026_mld ?? 0).toLocaleString('ru-RU');
+document.getElementById('dK4sub').textContent = S.osv2026_pct != null ? `${S.osv2026_pct}% от финансирования 2026` : '';
+document.getElementById('dK5').textContent = (S.remain2026_mld ?? 0).toLocaleString('ru-RU');
+document.getElementById('dKpiNote').textContent =
+  `Подрядчики кредитуют стройку на ${(S.credit_mld ?? 0).toLocaleString('ru-RU')} млрд ₽. `
+  + `По ${S.n_no_budget2026 || 0} объектам освоение 2026 — 0% (фильтр ниже).`;
 
 let activeFilter = 'all', activeContractor = null, matrixFilter = 'all';
 
