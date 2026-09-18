@@ -127,7 +127,7 @@
     </div>
 
     <strong style="display:block;margin:18px 0 4px">Матрица риска: готовность vs оплата</strong>
-    <p class="note" style="margin-top:0">Снизу оплата, слева СГ. Диагональ — идеал «оплата = готовность». Выше — подрядчик кредитует, ниже — оплата впереди. Размер точки — приоритет. Клик или «Динамика» — история школы.</p>
+    <p class="note" style="margin-top:0">Снизу оплата, слева СГ. Диагональ — идеал «оплата = готовность», пунктир рядом — коридор ±10 п.п. Выше — подрядчик кредитует, ниже — оплата впереди. Размер точки — приоритет. Клик или «Динамика» — история школы.</p>
     <div class="row" style="margin:8px 0 4px">
       <select id="selMatrixSchool" style="min-width:220px"></select>
       <button type="button" class="fbtn" id="btnPlayPath">Динамика</button>
@@ -472,6 +472,15 @@ function renderMatrix() {
             diagLine: {
               type: 'line', xMin: 0, yMin: 0, xMax: 100, yMax: 100,
               borderColor: 'rgba(90,113,137,.55)', borderWidth: 1.5, borderDash: [5, 4],
+            },
+            // коридор ±10 п.п. вокруг идеала
+            diagCredit: {
+              type: 'line', xMin: 0, yMin: 10, xMax: 90, yMax: 100,
+              borderColor: 'rgba(147,168,188,.7)', borderWidth: 1, borderDash: [2, 3],
+            },
+            diagOver: {
+              type: 'line', xMin: 10, yMin: 0, xMax: 100, yMax: 90,
+              borderColor: 'rgba(147,168,188,.7)', borderWidth: 1, borderDash: [2, 3],
             },
           },
         },
