@@ -1234,7 +1234,6 @@ DASHBOARD_BODY = r"""
     <div class="tbl-wrap" style="max-height:520px">
       <table class="full">
         <thead><tr>
-          <th class="r" title="Рублёвый приоритет: кредитование × срочность × доля у подрядчика">Приоритет</th>
           <th>Школа</th><th>Округ</th><th>Подрядчик</th><th>РП</th><th class="r">Контракт, млн ₽</th>
           <th class="r">СГ</th><th class="r">Оплата</th><th class="r">Разница, млн ₽</th><th>Статус</th><th>Ввод</th>
           <th class="r" title="ТЧ — техчасть экспертизы, СД — смета">Экспертиза</th>
@@ -1245,7 +1244,7 @@ DASHBOARD_BODY = r"""
         <tbody id="objTbl"></tbody>
       </table>
     </div>
-    <p class="note">Таблица по убыванию приоритета. Приоритет = сколько подрядчик кредитует (млн) × срочность (просрочка, 0% бюджета) × вес объекта у этого подрядчика. Клик по строке — вкладка «Один объект». Экспертиза: <span class="pill ok">ТЧ+СД</span> оба ок, <span class="pill ok">ТЧ</span> только техчасть (сметы нет), <span class="pill err">ТЧ отклонена</span>, <span class="pill warn">в экспертизе</span>. Удорожание — из плановой и согласованной стоимости экспертизы в Simple List (пусто, если сметы ещё нет).</p>
+    <p class="note">Таблица по убыванию недоплаты подрядчику (разница). Клик по строке — вкладка «Один объект». Экспертиза: <span class="pill ok">ТЧ+СД</span> оба ок, <span class="pill ok">ТЧ</span> только техчасть (сметы нет), <span class="pill err">ТЧ отклонена</span>, <span class="pill warn">в экспертизе</span>. Удорожание — из плановой и согласованной стоимости экспертизы в Simple List (пусто, если сметы ещё нет).</p>
   </div>
 
   <div class="tabpanel" data-tab="contractors" hidden>
@@ -1361,7 +1360,9 @@ function passesMatrixFilter(o) {
 }
 
 function renderObjTbl() {
-  const rows = DATA.objects.filter(o => passesFilter(o) && passesMatrixFilter(o)).sort((a,b)=>(b.risk_score||0)-(a.risk_score||0));
+  // сверху — кто сильнее кредитует стройку (отрицательная разница = недоплата подрядчику)
+  const rows = DATA.objects.filter(o => passesFilter(o) && passesMatrixFilter(o))
+    .sort((a,b) => (a.gap_rub||0) - (b.gap_rub||0));
   document.getElementById('objTbl').innerHTML = rows.map(o => {
     const days = o.days_to_open;
     const overdue = days!=null ? (days<0 ? `<span class="pill err">просрочка ${Math.abs(days)} дн.</span>` : `<span class="pill ok">осталось ${days} дн.</span>`) : '—';
@@ -1377,9 +1378,8 @@ function renderObjTbl() {
     } else {
       overrun = o.entered_exp ? '<span class="pill warn">без заключения</span>' : '—';
     }
-    const score = o.risk_score ? o.risk_score.toLocaleString('ru-RU') : '—';
     const overrunPct = o.exp_overrun!=null ? `<span class="money ${o.exp_overrun>0?'pos':(o.exp_overrun<0?'neg':'')}">${o.exp_overrun>0?'+':''}${o.exp_overrun}%</span>` : '—';
-    return `<tr class="clickable" data-uin="${o.uin}"><td class="r"><strong>${score}</strong></td><td title="${o.full}">${o.name}${o.advance_stuck?' <span class="flag">аванс</span>':''}</td><td>${o.municipality||'—'}</td><td>${o.contractor||'—'}</td><td>${o.rp||'—'}</td>` +
+    return `<tr class="clickable" data-uin="${o.uin}"><td title="${o.full}">${o.name}${o.advance_stuck?' <span class="flag">аванс</span>':''}</td><td>${o.municipality||'—'}</td><td>${o.contractor||'—'}</td><td>${o.rp||'—'}</td>` +
       `<td class="r">${o.contract_value??'—'}</td><td class="r">${o.sg}%</td><td class="r">${o.pct??'—'}%</td>` +
       `<td class="r">${moneyCell(o.gap_rub)}</td><td><span class="pill ${STATUS_PILL[o.money_status]}">${STATUS_LABEL[o.money_status]}</span></td><td>${overdue}</td><td class="r">${overrun}</td>` +
       `<td class="r">${overrunPct}</td><td class="r">${moneyCell(o.exp_delta_mln)}</td><td class="r">${o.exp_agreed_mln??'—'}</td></tr>`;
