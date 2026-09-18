@@ -873,7 +873,7 @@ def load_data():
             osv2026_rub += plan * float(osv_pct) / 100.0
     remain2026_rub = max(0.0, plan2026_rub - osv2026_rub)
     contract_rub = sum((k.get("contract_value") or 0) * 1e6 for k in kt_rows)
-    credit_rub = sum(-(k["gap_rub"] or 0) for k in kt_rows if k["money_status"] == "credit" and (k["gap_rub"] or 0) < 0)
+    credit_mln = sum(-(k["gap_rub"] or 0) for k in kt_rows if k["money_status"] == "credit" and (k["gap_rub"] or 0) < 0)
 
     no_adv = [s for s in valid if not s["advance"]]
     facts_na = [s["sg"] for s in no_adv]
@@ -889,7 +889,7 @@ def load_data():
             "osv2026_mld": round(osv2026_rub / 1e9, 2),
             "osv2026_pct": round(osv2026_rub / plan2026_rub * 100, 1) if plan2026_rub else None,
             "remain2026_mld": round(remain2026_rub / 1e9, 2),
-            "credit_mld": round(credit_rub / 1e9, 2),
+            "credit_mld": round(credit_mln / 1000, 2),
             "median_r": round(median(rs_corr), 3) if rs_corr else 0,
             "n_varying": len(varying),
             "n_sg_ahead": sum(1 for g in gaps if g > 55),
