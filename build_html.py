@@ -999,11 +999,31 @@ HEAD_STYLE = r"""<!DOCTYPE html>
   .stub-label.done { color:var(--accent-d); background:var(--accent-dim); border-color:var(--accent-l) }
   .box.done { border-color:var(--accent-l); background:#F3FBFC }
   .kpis.four { grid-template-columns:repeat(4,1fr) }
-  .kpis.five { grid-template-columns:repeat(5,1fr) }
-  .kpi .sub { font-size:.78rem; color:var(--muted); margin-top:2px; font-variant-numeric:tabular-nums }
-  @media(max-width:1100px) { .kpis.five { grid-template-columns:repeat(3,1fr) } }
-  @media(max-width:900px) { .kpis.four,.kpis.five { grid-template-columns:repeat(2,1fr) } }
-  @media(max-width:700px) { .kpis,.kpis.four,.kpis.five { grid-template-columns:1fr } }
+  .exec-head { display:grid; grid-template-columns:1.4fr 1fr; gap:10px; margin:16px 0 8px }
+  .kpi-hero { background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:16px 18px; box-shadow:0 1px 3px rgba(13,32,64,.05) }
+  .kpi-hero .l { font-size:.78rem; color:var(--muted); font-weight:600; letter-spacing:.02em; text-transform:uppercase; margin:0 0 6px }
+  .kpi-hero .n { font-size:1.85rem; font-weight:700; color:var(--navy); line-height:1.15; font-variant-numeric:tabular-nums }
+  .kpi-hero .n .of { font-size:1rem; font-weight:600; color:var(--muted); margin-left:6px }
+  .kpi-hero .meta { margin-top:8px; font-size:.88rem; color:var(--text) }
+  .kpi-hero .meta strong { font-variant-numeric:tabular-nums }
+  .bar { height:8px; background:#EAF0F5; border-radius:99px; overflow:hidden; margin-top:12px }
+  .bar > i { display:block; height:100%; background:linear-gradient(90deg, var(--accent-d), var(--accent-l)); border-radius:99px }
+  .kpi-side { display:grid; grid-template-columns:1fr 1fr; grid-template-rows:auto auto; gap:10px }
+  .kpi-side .kpi.span2 { grid-column:1 / -1 }
+  .kpi .sub { font-size:.78rem; color:var(--muted); margin-top:4px; font-variant-numeric:tabular-nums }
+  .kpi.risk .n { color:var(--accent-d) }
+  .kpi.alert .n { color:#8A5E10 }
+  .kpi.alert { background:var(--warn-bg); border-color:#EFCB84 }
+  .kpi.clickable { cursor:pointer }
+  .kpi.clickable:hover { border-color:var(--accent) }
+  @media(max-width:900px) {
+    .exec-head { grid-template-columns:1fr }
+    .kpis.four { grid-template-columns:repeat(2,1fr) }
+  }
+  @media(max-width:700px) {
+    .kpis,.kpis.four { grid-template-columns:1fr }
+    .kpi-side { grid-template-columns:1fr }
+  }
   .navlink { display:inline-block; margin:0 0 16px; font-size:.85rem; color:var(--accent-d); text-decoration:none; font-weight:600 }
   .navlink:hover { text-decoration:underline }
   .tabbar { display:flex; gap:4px; border-bottom:2px solid var(--line); margin:18px 0 20px }
@@ -1152,16 +1172,31 @@ METHOD_BODY = r"""
 """
 
 DASHBOARD_BODY = r"""
-  <p class="note" style="margin:0 0 14px">По каждому объекту: сколько денег получил подрядчик против того, сколько физически построил — в рублях по цене контракта, не в очках готовности. Если оплата обгоняет стройку — избыток (куда делись деньги, непонятно). Если стройка обгоняет оплату — подрядчик кредитует стройку сам, ему должны заплатить.</p>
+  <p class="note" style="margin:0 0 4px">Сверху — деньги года: сколько положено на 2026, сколько уже забрали, сколько осталось. Справа — масштаб портфеля и где горит: недоплата подрядчикам и школы с нулевым освоением.</p>
 
-  <div class="kpis five">
-    <div class="kpi"><div class="n" id="dK1"></div><div class="l">объектов</div></div>
-    <div class="kpi"><div class="n" id="dK2"></div><div class="l">контракт, млрд ₽</div></div>
-    <div class="kpi"><div class="n" id="dK3"></div><div class="l">финансирование 2026, млрд ₽</div></div>
-    <div class="kpi"><div class="n" id="dK4"></div><div class="sub" id="dK4sub"></div><div class="l">освоено в 2026, млрд ₽</div></div>
-    <div class="kpi"><div class="n" id="dK5"></div><div class="l">остаток 2026, млрд ₽</div></div>
+  <div class="exec-head">
+    <div class="kpi-hero">
+      <div class="l">Освоение бюджета 2026</div>
+      <div class="n"><span id="dHeroOsv"></span><span class="of">из <span id="dHeroPlan"></span> млрд ₽</span></div>
+      <div class="bar" title="доля освоенного от финансирования 2026"><i id="dHeroBar"></i></div>
+      <div class="meta"><strong id="dHeroPct"></strong> плана · осталось <strong id="dHeroRemain"></strong> млрд ₽</div>
+    </div>
+    <div class="kpi-side">
+      <div class="kpi span2">
+        <div class="n" id="dKObj"></div>
+        <div class="l">объектов в портфеле</div>
+        <div class="sub">контракт <span id="dKContract"></span> млрд ₽</div>
+      </div>
+      <div class="kpi risk">
+        <div class="n" id="dKCredit"></div>
+        <div class="l">кредитуют подрядчики, млрд ₽</div>
+      </div>
+      <div class="kpi alert clickable" id="dKZeroCard" title="Открыть фильтр: 0% освоения 2026">
+        <div class="n" id="dKZero"></div>
+        <div class="l">с нулевым освоением 2026</div>
+      </div>
+    </div>
   </div>
-  <p class="note" id="dKpiNote" style="margin-top:8px"></p>
 
   <div class="tabbar" id="tabBar">
     <button class="tabbtn active" data-tab="objects">Объекты</button>
@@ -1267,15 +1302,25 @@ function moneyCell(v) {
 }
 
 const S = DATA.stats;
-document.getElementById('dK1').textContent = S.n_objects || DATA.objects.length;
-document.getElementById('dK2').textContent = (S.contract_mld ?? 0).toLocaleString('ru-RU');
-document.getElementById('dK3').textContent = (S.plan2026_mld ?? 0).toLocaleString('ru-RU');
-document.getElementById('dK4').textContent = (S.osv2026_mld ?? 0).toLocaleString('ru-RU');
-document.getElementById('dK4sub').textContent = S.osv2026_pct != null ? `${S.osv2026_pct}% от финансирования 2026` : '';
-document.getElementById('dK5').textContent = (S.remain2026_mld ?? 0).toLocaleString('ru-RU');
-document.getElementById('dKpiNote').textContent =
-  `Подрядчики кредитуют стройку на ${(S.credit_mld ?? 0).toLocaleString('ru-RU')} млрд ₽. `
-  + `По ${S.n_no_budget2026 || 0} объектам освоение 2026 — 0% (фильтр ниже).`;
+const fmt = v => (v ?? 0).toLocaleString('ru-RU');
+document.getElementById('dHeroOsv').textContent = fmt(S.osv2026_mld);
+document.getElementById('dHeroPlan').textContent = fmt(S.plan2026_mld);
+document.getElementById('dHeroPct').textContent = S.osv2026_pct != null ? `${fmt(S.osv2026_pct)}%` : '—';
+document.getElementById('dHeroRemain').textContent = fmt(S.remain2026_mld);
+document.getElementById('dHeroBar').style.width = Math.max(0, Math.min(100, S.osv2026_pct || 0)) + '%';
+document.getElementById('dKObj').textContent = S.n_objects || DATA.objects.length;
+document.getElementById('dKContract').textContent = fmt(S.contract_mld);
+document.getElementById('dKCredit').textContent = fmt(S.credit_mld);
+document.getElementById('dKZero').textContent = S.n_no_budget2026 || 0;
+
+function setTopFilter(f) {
+  activeFilter = f;
+  document.querySelectorAll('#filterBar .fbtn').forEach(b => b.classList.toggle('active', b.dataset.f === f));
+  stopPlay();
+  renderObjTbl();
+  renderMatrix();
+}
+document.getElementById('dKZeroCard').onclick = () => setTopFilter('nobudget');
 
 let activeFilter = 'all', activeContractor = null, matrixFilter = 'all';
 
