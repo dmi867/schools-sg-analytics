@@ -230,17 +230,23 @@
 
   <div class="tabpanel" data-tab="contractors" hidden>
     <strong style="display:block;margin-top:4px;margin-bottom:8px">Подрядчики: портфель и финансирование</strong>
-    <p class="note" style="margin-top:0">По каждому подрядчику — все его школы в портфеле: сумма контрактов (весь срок), финансирование 2026, сколько уже освоено и остаток. «Кредитует» — сколько построено сверх оплаты. Клик по строке — состав портфеля ниже и фильтр на вкладке «Объекты».</p>
+    <p class="note" style="margin-top:0">По подрядчику: контракты за весь срок и лимит финансирования на 2026 год — сколько уже освоено и сколько осталось. «Кредитует» — построено сверх оплаты. Клик — состав портфеля ниже.</p>
     <div class="tbl-wrap">
-      <table class="full">
+      <table class="full dense" id="contrTable">
+        <colgroup>
+          <col style="width:22%"><col style="width:8%">
+          <col style="width:12%"><col style="width:16%"><col style="width:12%">
+          <col style="width:12%"><col style="width:10%"><col style="width:8%">
+        </colgroup>
         <thead><tr>
-          <th>Подрядчик</th><th class="r">Объектов</th>
+          <th>Подрядчик</th>
+          <th class="r">Объектов</th>
           <th class="r" title="Сумма контрактов по всем его объектам, весь срок">Контракт, млн ₽</th>
-          <th class="r" title="Сумма финансирования 2026 по всем его объектам">Финанс 2026, млн ₽</th>
-          <th class="r">Освоено 2026, млн ₽</th>
-          <th class="r">Остаток 2026, млн ₽</th>
-          <th class="r">Кредитует, млн ₽</th>
-          <th class="r">0% освоения</th>
+          <th class="r" title="Лимит финансирования на 2026 год по всем объектам подрядчика">Финансирование 2026, млн ₽</th>
+          <th class="r" title="Сколько из финансирования 2026 уже освоено">Освоено в 2026, млн ₽</th>
+          <th class="r" title="Финансирование 2026 минус освоено">Остаток 2026, млн ₽</th>
+          <th class="r" title="Сколько построено сверх оплаты">Кредитует, млн ₽</th>
+          <th class="r" title="Сколько объектов с нулевым освоением бюджета 2026">С нулевым освоением</th>
         </tr></thead>
         <tbody id="contrRollup"></tbody>
       </table>
@@ -249,11 +255,19 @@
       <strong style="display:block;margin-bottom:6px">Портфель: <span id="contrDetailName"></span></strong>
       <p class="note" style="margin:0 0 8px" id="contrDetailSum"></p>
       <div class="tbl-wrap" style="max-height:360px">
-        <table class="full">
+        <table class="full dense">
+          <colgroup>
+            <col style="width:28%"><col style="width:8%"><col style="width:12%">
+            <col style="width:16%"><col style="width:12%"><col style="width:12%"><col style="width:12%">
+          </colgroup>
           <thead><tr>
-            <th>Школа</th><th class="r">СГ</th><th class="r">Контракт, млн ₽</th>
-            <th class="r">Финанс 2026, млн ₽</th><th class="r">Освоение 2026</th>
-            <th class="r">Разница, млн ₽</th><th>Статус</th>
+            <th>Школа</th>
+            <th class="r">Готовность, %</th>
+            <th class="r">Контракт, млн ₽</th>
+            <th class="r">Финансирование 2026, млн ₽</th>
+            <th class="r">Освоение 2026</th>
+            <th class="r">Разница, млн ₽</th>
+            <th>Статус</th>
           </tr></thead>
           <tbody id="contrDetailTbl"></tbody>
         </table>
@@ -469,7 +483,7 @@ function renderContrDetail() {
   box.hidden = false;
   document.getElementById('contrDetailName').textContent = activeContractor;
   document.getElementById('contrDetailSum').textContent =
-    `${objs.length} объект(ов) · контракт ${Math.round(contract).toLocaleString('ru-RU')} млн ₽ · финанс 2026 ${Math.round(plan).toLocaleString('ru-RU')} млн ₽ · освоено ${Math.round(osv).toLocaleString('ru-RU')} · остаток ${Math.round(Math.max(0, plan-osv)).toLocaleString('ru-RU')}`;
+    `${objs.length} объект(ов) · контракт ${Math.round(contract).toLocaleString('ru-RU')} млн ₽ · финансирование 2026 ${Math.round(plan).toLocaleString('ru-RU')} млн ₽ · освоено ${Math.round(osv).toLocaleString('ru-RU')} · остаток ${Math.round(Math.max(0, plan-osv)).toLocaleString('ru-RU')}`;
   document.getElementById('contrDetailTbl').innerHTML = objs.map(o => {
     const osvPct = o.osv2026_pct != null ? `${o.osv2026_pct}%` : '—';
     return `<tr class="clickable" data-uin="${o.uin}"><td title="${o.full}">${o.name}</td><td class="r">${o.sg}%</td>` +
