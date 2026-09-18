@@ -1153,13 +1153,15 @@ DASHBOARD_BODY = r"""
     </div>
 
     <strong style="display:block;margin:18px 0 4px">Матрица риска: готовность vs оплата</strong>
-    <p class="note" style="margin-top:0">Снизу — оплата, слева — стройготовность. Точка — школа сейчас. Выберите школу и нажмите «Динамика» — кружок пробежит по её истории. Клик по точке тоже выбирает школу.</p>
+    <p class="note" style="margin-top:0">Снизу оплата, слева СГ. Диагональ — идеал «оплата = готовность». Выше — подрядчик кредитует, ниже — оплата впереди. Размер точки — приоритет. Клик или «Динамика» — история школы.</p>
     <div class="row" style="margin:8px 0 4px">
       <select id="selMatrixSchool" style="min-width:220px"></select>
       <button type="button" class="fbtn" id="btnPlayPath">Динамика</button>
       <span class="note" id="matrixPlayLabel" style="margin:0"></span>
     </div>
-    <div class="chart" style="height:520px"><canvas id="cMatrix"></canvas></div>
+    <div class="box" style="padding:12px 14px 8px;margin:8px 0 0">
+      <div class="chart" style="height:520px;margin:0"><canvas id="cMatrix"></canvas></div>
+    </div>
 
     <div class="tbl-wrap" style="max-height:520px">
       <table class="full">
@@ -1324,11 +1326,47 @@ renderRollup();
 
 // Матрица риска + анимация траектории выбранной школы.
 const MATRIX_STATUS = {
-  over:     { label: 'Избыток оплаты (оплата выше готовности)', color: '#D94040', shape: 'triangle' },
-  credit:   { label: 'Кредитует подрядчик (готовность выше оплаты)', color: '#E8A020', shape: 'rect' },
-  balanced: { label: 'Баланс (±10 п.п.)', color: '#27AE60', shape: 'circle' },
-  unknown:  { label: 'Нет данных по оплате', color: '#93A8BC', shape: 'circle' },
+  credit:   { label: 'Кредитует подрядчик', color: '#E8A020', fill: 'rgba(232,160,32,.78)' },
+  balanced: { label: 'Баланс (±10 п.п.)', color: '#27AE60', fill: 'rgba(39,174,96,.85)' },
+  over:     { label: 'Избыток оплаты', color: '#D94040', fill: 'rgba(217,64,64,.78)' },
+  unknown:  { label: 'Нет данных', color: '#93A8BC', fill: 'rgba(147,168,188,.7)' },
 };
+
+const matrixZonesPlugin = {
+  id: 'matrixZones',
+  beforeDatasetsDraw(chart) {
+    const { ctx, scales: { x, y } } = chart;
+    if (!x || !y) return;
+    const x0 = x.getPixelForValue(0), x1 = x.getPixelForValue(100);
+    const y0 = y.getPixelForValue(0), y1 = y.getPixelForValue(100);
+    ctx.save();
+    // выше диагонали: СГ > оплаты
+    ctx.beginPath();
+    ctx.moveTo(x0, y0); ctx.lineTo(x0, y1); ctx.lineTo(x1, y1); ctx.closePath();
+    ctx.fillStyle = 'rgba(232,160,32,.09)';
+    ctx.fill();
+    // ниже диагонали: оплата > СГ
+    ctx.beginPath();
+    ctx.moveTo(x0, y0); ctx.lineTo(x1, y0); ctx.lineTo(x1, y1); ctx.closePath();
+    ctx.fillStyle = 'rgba(217,64,64,.06)';
+    ctx.fill();
+    // подписи зон
+    ctx.font = "600 11px 'Golos Text', Manrope, system-ui, sans-serif";
+    ctx.fillStyle = 'rgba(138,94,16,.55)';
+    ctx.textAlign = 'left';
+    ctx.fillText('кредитует', x0 + 10, y1 + 18);
+    ctx.fillStyle = 'rgba(163,46,46,.45)';
+    ctx.textAlign = 'right';
+    ctx.fillText('избыток оплаты', x1 - 10, y0 - 10);
+    ctx.restore();
+  },
+};
+
+function matrixPointRadius(risk) {
+  if (!risk) return 5;
+  return Math.max(5, Math.min(14, 4 + Math.sqrt(risk) * 0.35));
+}
+
 let chartMatrix, matrixDatasets;
 let playUin = null, playIdx = 0, playTimer = null;
 const selMatrix = document.getElementById('selMatrixSchool');
@@ -1373,22 +1411,22 @@ function applyPlayOverlay(datasets) {
     label: 'Траектория',
     data: trail,
     showLine: true,
-    borderColor: '#143260',
-    backgroundColor: 'rgba(20,50,96,.08)',
+    borderColor: 'rgba(20,50,96,.45)',
+    backgroundColor: 'transparent',
     pointRadius: 0,
-    borderWidth: 2,
-    tension: 0.15,
+    borderWidth: 1.5,
+    tension: 0.2,
     order: 0,
   });
   const cur = path[Math.min(playIdx, path.length - 1)];
   datasets.push({
-    label: 'Движение',
+    label: 'Выбрано',
     data: [{ x: cur.pay, y: cur.sg, d: cur.d }],
     backgroundColor: '#143260',
     borderColor: '#fff',
-    borderWidth: 2,
-    pointRadius: 11,
-    pointHoverRadius: 13,
+    borderWidth: 3,
+    pointRadius: 9,
+    pointHoverRadius: 11,
     pointStyle: 'circle',
     order: 1,
   });
@@ -1399,16 +1437,19 @@ function renderMatrix() {
   const matrixObjs = DATA.objects.filter(o => o.pct != null && passesFilter(o));
   matrixDatasets = Object.keys(MATRIX_STATUS).map(status => {
     const cfg = MATRIX_STATUS[status];
-    const pts = matrixObjs.filter(o => o.money_status === status);
+    const pts = matrixObjs.filter(o => o.money_status === status && o.uin !== playUin);
     return {
       label: cfg.label,
-      data: pts.map(o => ({ x: o.pct, y: o.sg, uin: o.uin, name: o.name, full: o.full })),
-      backgroundColor: cfg.color,
+      data: pts.map(o => ({
+        x: o.pct, y: o.sg, uin: o.uin, name: o.name, full: o.full,
+        risk: o.risk_score || 0, status,
+      })),
+      backgroundColor: cfg.fill,
       borderColor: '#fff',
-      borderWidth: 2,
-      pointStyle: cfg.shape,
-      pointRadius: 6,
-      pointHoverRadius: 8,
+      borderWidth: 1.5,
+      pointStyle: 'circle',
+      pointRadius: ctx => matrixPointRadius(ctx.raw && ctx.raw.risk),
+      pointHoverRadius: ctx => matrixPointRadius(ctx.raw && ctx.raw.risk) + 2,
       order: 2,
     };
   }).filter(ds => ds.data.length);
@@ -1417,9 +1458,11 @@ function renderMatrix() {
   chartMatrix = new Chart(document.getElementById('cMatrix'), {
     type: 'scatter',
     data: { datasets: matrixDatasets },
+    plugins: [matrixZonesPlugin],
     options: {
       responsive: true, maintainAspectRatio: false,
       animation: false,
+      layout: { padding: { top: 8, right: 8, left: 4, bottom: 4 } },
       onClick: (evt, els) => {
         if (!els.length) return;
         const ds = matrixDatasets[els[0].datasetIndex], pt = ds.data[els[0].index];
@@ -1428,26 +1471,52 @@ function renderMatrix() {
         setPlaySchool(pt.uin);
       },
       plugins: {
-        legend: { position: 'bottom', labels: { boxWidth: 12, usePointStyle: true } },
+        legend: {
+          position: 'bottom',
+          labels: {
+            boxWidth: 10, boxHeight: 10, usePointStyle: true, pointStyle: 'circle',
+            padding: 14, color: '#5A7189', font: { size: 11, family: "'Golos Text', Manrope, system-ui" },
+            filter: (item) => item.text !== 'Траектория' && item.text !== 'Выбрано',
+          },
+        },
         datalabels: { display: false },
         tooltip: {
+          backgroundColor: 'rgba(13,32,64,.92)',
+          titleFont: { size: 12, family: "'Golos Text', Manrope, system-ui" },
+          bodyFont: { size: 11, family: "'Golos Text', Manrope, system-ui" },
+          padding: 10,
           callbacks: {
             title: items => items[0].raw.full || items[0].raw.d || 'Точка',
-            label: item => `Оплата ${item.raw.x}%, готовность ${item.raw.y}%`,
+            label: item => {
+              const r = item.raw;
+              if (r.d) return `на ${r.d}: оплата ${r.x}%, СГ ${r.y}%`;
+              const risk = r.risk ? `, приоритет ${r.risk}` : '';
+              return `оплата ${r.x}%, СГ ${r.y}%${risk}`;
+            },
           },
         },
         annotation: {
           annotations: {
-            diagLine: { type: 'line', xMin: 0, yMin: 0, xMax: 100, yMax: 100, borderColor: '#5A7189', borderWidth: 1, borderDash: [4, 4] },
-            // коридор ±10 п.п.: сверху СГ выше оплаты, снизу — оплата выше СГ
-            diagCredit: { type: 'line', xMin: 0, yMin: 10, xMax: 90, yMax: 100, borderColor: '#93A8BC', borderWidth: 1, borderDash: [2, 3] },
-            diagOver: { type: 'line', xMin: 10, yMin: 0, xMax: 100, yMax: 90, borderColor: '#93A8BC', borderWidth: 1, borderDash: [2, 3] },
+            diagLine: {
+              type: 'line', xMin: 0, yMin: 0, xMax: 100, yMax: 100,
+              borderColor: 'rgba(90,113,137,.55)', borderWidth: 1.5, borderDash: [5, 4],
+            },
           },
         },
       },
       scales: {
-        x: { min: 0, max: 100, title: { display: true, text: 'Оплата по контракту, %' } },
-        y: { min: 0, max: 100, title: { display: true, text: 'Стройготовность, %' } },
+        x: {
+          min: 0, max: 100,
+          grid: { color: 'rgba(214,226,236,.7)', drawBorder: false },
+          ticks: { color: '#8BA4B8', font: { size: 10 }, stepSize: 20 },
+          title: { display: true, text: 'Оплата по контракту, %', color: '#5A7189', font: { size: 12, weight: '600', family: "'Golos Text', Manrope, system-ui" } },
+        },
+        y: {
+          min: 0, max: 100,
+          grid: { color: 'rgba(214,226,236,.7)', drawBorder: false },
+          ticks: { color: '#8BA4B8', font: { size: 10 }, stepSize: 20 },
+          title: { display: true, text: 'Стройготовность, %', color: '#5A7189', font: { size: 12, weight: '600', family: "'Golos Text', Manrope, system-ui" } },
+        },
       },
     },
   });
