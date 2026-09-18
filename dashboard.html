@@ -339,10 +339,14 @@ function renderObjTbl() {
         : `<span class="pill ok" title="осталось ${days} дн.">+${days} дн.</span>`)
       : '—';
     let overrun;
-    if (o.exp_last_result==='Отрицательное') {
+    if (o.exp_pending && o.exp_last_result==='Положительное' && o.sd_confirmed) {
+      overrun = '<span class="pill warn" title="По прошлому заключению ТЧ+СД уже были; сейчас открыта новая заявка на экспертизу">повтор эксп.</span>';
+    } else if (o.exp_pending && o.exp_last_result==='Отрицательное') {
+      overrun = '<span class="pill warn" title="Прошлое заключение — отрицательное; открыта новая заявка">повтор после откл.</span>';
+    } else if (o.exp_last_result==='Отрицательное') {
       overrun = '<span class="pill err" title="Отрицательное заключение">откл.</span>';
     } else if (o.exp_pending) {
-      overrun = '<span class="pill warn" title="Заявка ещё открыта">в эксп.</span>';
+      overrun = '<span class="pill warn" title="Заявка ещё открыта, итогового заключения нет">в эксп.</span>';
     } else if (o.exp_last_result==='Положительное' && o.sd_confirmed) {
       overrun = '<span class="pill ok" title="Техчасть и смета">ТЧ+СД</span>';
     } else if (o.exp_last_result==='Положительное' && !o.sd_confirmed) {
@@ -352,9 +356,12 @@ function renderObjTbl() {
     }
     const pct = o.exp_overrun!=null ? `${o.exp_overrun>0?'+':''}${o.exp_overrun}%` : null;
     const after = o.exp_agreed_mln;
+    const afterTip = o.exp_pending
+      ? 'согласованная смета по прошлому прохождению; сейчас идёт повторная экспертиза'
+      : 'согласованная после экспертизы';
     const smeta = after==null
       ? '—'
-      : `<span class="money ${o.exp_overrun>0?'pos':(o.exp_overrun<0?'neg':'')}" title="согласованная после экспертизы">${after.toLocaleString('ru-RU')}${pct ? ' ('+pct+')' : ''}</span>`;
+      : `<span class="money ${o.exp_overrun>0?'pos':(o.exp_overrun<0?'neg':'')}" title="${afterTip}">${after.toLocaleString('ru-RU')}${pct ? ' ('+pct+')' : ''}</span>`;
     const tip = [o.full, o.rp ? 'РП: '+o.rp : '', o.contractor||'', 'УИН: '+o.uin].filter(Boolean).join(' · ');
     const stack = `<div class="stack" title="${tip}">` +
       `<span class="main">${o.name}${o.advance_stuck?' <span class="flag">аванс</span>':''}</span>` +
