@@ -1249,17 +1249,35 @@ DASHBOARD_BODY = r"""
   </div>
 
   <div class="tabpanel" data-tab="contractors" hidden>
-    <strong style="display:block;margin-top:4px;margin-bottom:8px">Подрядчики: кто кредитует стройку</strong>
-    <p class="note" style="margin-top:0">«Кредитует» — сколько млн ₽ уже построено, а денег подрядчику ещё не заплатили. «Доля риска» — какой процент этой суммы у него. Клик по строке — его школы.</p>
+    <strong style="display:block;margin-top:4px;margin-bottom:8px">Подрядчики: портфель и финансирование</strong>
+    <p class="note" style="margin-top:0">По каждому подрядчику — все его школы в портфеле: сумма контрактов (весь срок), финансирование 2026, сколько уже освоено и остаток. «Кредитует» — сколько построено сверх оплаты. Клик по строке — состав портфеля ниже и фильтр на вкладке «Объекты».</p>
     <div class="tbl-wrap">
       <table class="full">
         <thead><tr>
-          <th>Подрядчик</th><th class="r">Объектов</th><th class="r">Контракт, млн ₽</th>
-          <th class="r">Кредитует стройку, млн ₽</th><th class="r">Доля риска</th>
-          <th class="r">Не осваивают 2026</th>
+          <th>Подрядчик</th><th class="r">Объектов</th>
+          <th class="r" title="Сумма контрактов по всем его объектам, весь срок">Контракт, млн ₽</th>
+          <th class="r" title="Сумма финансирования 2026 по всем его объектам">Финанс 2026, млн ₽</th>
+          <th class="r">Освоено 2026, млн ₽</th>
+          <th class="r">Остаток 2026, млн ₽</th>
+          <th class="r">Кредитует, млн ₽</th>
+          <th class="r">0% освоения</th>
         </tr></thead>
         <tbody id="contrRollup"></tbody>
       </table>
+    </div>
+    <div id="contrDetail" hidden style="margin-top:16px">
+      <strong style="display:block;margin-bottom:6px">Портфель: <span id="contrDetailName"></span></strong>
+      <p class="note" style="margin:0 0 8px" id="contrDetailSum"></p>
+      <div class="tbl-wrap" style="max-height:360px">
+        <table class="full">
+          <thead><tr>
+            <th>Школа</th><th class="r">СГ</th><th class="r">Контракт, млн ₽</th>
+            <th class="r">Финанс 2026, млн ₽</th><th class="r">Освоение 2026</th>
+            <th class="r">Разница, млн ₽</th><th>Статус</th>
+          </tr></thead>
+          <tbody id="contrDetailTbl"></tbody>
+        </table>
+      </div>
     </div>
   </div>
 
@@ -1396,22 +1414,62 @@ function renderRollup() {
   const byC = {};
   DATA.objects.forEach(o => {
     const c = o.contractor || '—';
-    const e = byC[c] || (byC[c] = { contractor:c, n:0, contract:0, credit:0, no_budget2026:0 });
-    e.n++; e.contract += o.contract_value||0;
-    if (o.money_status==='credit') e.credit += -(o.gap_rub||0);
+    const e = byC[c] || (byC[c] = {
+      contractor:c, n:0, contract:0, credit:0, plan2026:0, osv2026:0, no_budget2026:0,
+    });
+    e.n++;
+    e.contract += o.contract_value || 0;
+    if (o.money_status === 'credit') e.credit += -(o.gap_rub || 0);
+    const plan = o.plan2026 || 0;
+    e.plan2026 += plan;
+    if (plan && o.osv2026_pct != null) e.osv2026 += plan * Number(o.osv2026_pct) / 100;
     if (o.flags && o.flags.includes('не осваивает бюджет 2026')) e.no_budget2026++;
   });
-  const rows = Object.values(byC).sort((a,b)=>b.credit-a.credit);
-  const totalCredit = rows.reduce((s,c)=>s+c.credit, 0);
+  const rows = Object.values(byC).sort((a,b) => (b.plan2026 - a.plan2026) || (b.credit - a.credit));
   document.getElementById('contrRollup').innerHTML = rows.map(c => {
-    const sharePct = totalCredit > 0 && c.credit > 0 ? Math.round(c.credit / totalCredit * 1000) / 10 : null;
+    const remain = Math.max(0, c.plan2026 - c.osv2026);
     const creditTxt = c.credit > 0 ? Math.round(c.credit).toLocaleString('ru-RU') : '—';
-    const shareTxt = sharePct != null ? sharePct + '%' : '—';
-    return `<tr class="clickable${activeContractor===c.contractor?' row-active':''}" data-c="${c.contractor}"><td>${c.contractor}</td><td class="r">${c.n}</td><td class="r">${Math.round(c.contract)}</td><td class="r">${creditTxt}</td><td class="r">${shareTxt}</td><td class="r">${c.no_budget2026||'—'}</td></tr>`;
+    return `<tr class="clickable${activeContractor===c.contractor?' row-active':''}" data-c="${c.contractor}">` +
+      `<td>${c.contractor}</td><td class="r">${c.n}</td><td class="r">${Math.round(c.contract).toLocaleString('ru-RU')}</td>` +
+      `<td class="r">${Math.round(c.plan2026).toLocaleString('ru-RU')}</td>` +
+      `<td class="r">${Math.round(c.osv2026).toLocaleString('ru-RU')}</td>` +
+      `<td class="r">${Math.round(remain).toLocaleString('ru-RU')}</td>` +
+      `<td class="r">${creditTxt}</td><td class="r">${c.no_budget2026||'—'}</td></tr>`;
   }).join('');
   document.querySelectorAll('#contrRollup tr.clickable').forEach(tr => tr.onclick = () => {
-    activeContractor = activeContractor===tr.dataset.c ? null : tr.dataset.c;
-    renderRollup(); renderObjTbl(); renderMatrix(); switchTab('objects');
+    activeContractor = activeContractor === tr.dataset.c ? null : tr.dataset.c;
+    renderRollup();
+    renderContrDetail();
+    renderObjTbl();
+    renderMatrix();
+  });
+  renderContrDetail();
+}
+
+function renderContrDetail() {
+  const box = document.getElementById('contrDetail');
+  if (!activeContractor) { box.hidden = true; return; }
+  const objs = DATA.objects.filter(o => (o.contractor || '—') === activeContractor)
+    .sort((a,b) => (b.plan2026||0) - (a.plan2026||0));
+  const plan = objs.reduce((s,o) => s + (o.plan2026||0), 0);
+  const osv = objs.reduce((s,o) => s + ((o.plan2026||0) * (o.osv2026_pct != null ? Number(o.osv2026_pct) : 0) / 100), 0);
+  const contract = objs.reduce((s,o) => s + (o.contract_value||0), 0);
+  box.hidden = false;
+  document.getElementById('contrDetailName').textContent = activeContractor;
+  document.getElementById('contrDetailSum').textContent =
+    `${objs.length} объект(ов) · контракт ${Math.round(contract).toLocaleString('ru-RU')} млн ₽ · финанс 2026 ${Math.round(plan).toLocaleString('ru-RU')} млн ₽ · освоено ${Math.round(osv).toLocaleString('ru-RU')} · остаток ${Math.round(Math.max(0, plan-osv)).toLocaleString('ru-RU')}`;
+  document.getElementById('contrDetailTbl').innerHTML = objs.map(o => {
+    const osvPct = o.osv2026_pct != null ? `${o.osv2026_pct}%` : '—';
+    return `<tr class="clickable" data-uin="${o.uin}"><td title="${o.full}">${o.name}</td><td class="r">${o.sg}%</td>` +
+      `<td class="r">${o.contract_value??'—'}</td><td class="r">${o.plan2026??'—'}</td><td class="r">${osvPct}</td>` +
+      `<td class="r">${moneyCell(o.gap_rub)}</td><td><span class="pill ${STATUS_PILL[o.money_status]}">${STATUS_LABEL[o.money_status]}</span></td></tr>`;
+  }).join('');
+  document.querySelectorAll('#contrDetailTbl tr.clickable').forEach(tr => tr.onclick = () => {
+    sel.value = tr.dataset.uin;
+    selMatrix.value = tr.dataset.uin;
+    drawTraj(tr.dataset.uin);
+    setPlaySchool(tr.dataset.uin, false);
+    switchTab('one');
   });
 }
 
