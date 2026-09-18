@@ -1026,9 +1026,11 @@ HEAD_STYLE = r"""<!DOCTYPE html>
   table.dense .stack .uin { font-size:.66rem; color:var(--faint); font-variant-numeric:tabular-nums; display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
   table.dense .cell-stack { display:flex; flex-direction:column; align-items:flex-start; gap:4px; min-width:0; max-width:100% }
   table.dense .cell-stack.end { align-items:flex-end; text-align:right }
-  table.dense .dates { font-size:.66rem; line-height:1.35; color:var(--muted); white-space:normal }
+  table.dense .dates { font-size:.66rem; line-height:1.3; color:var(--muted); white-space:nowrap }
   table.dense .dates b { color:var(--text); font-weight:600 }
   table.dense .dates .late { color:#A32E2E }
+  table.dense .exp-line { display:grid; grid-template-columns:4.6em 1fr; gap:4px 6px; align-items:baseline; font-size:.66rem; color:var(--muted); line-height:1.35 }
+  table.dense .exp-line b { color:var(--text); font-weight:600; font-variant-numeric:tabular-nums }
   table.dense .pill { font-size:.66rem; padding:2px 6px; gap:3px; white-space:nowrap; max-width:100%; overflow:hidden; text-overflow:ellipsis }
   table.dense .pill.ok::before, table.dense .pill.warn::before, table.dense .pill.err::before { width:5px; height:5px; flex:none }
   table.dense .flag { font-size:.62rem; padding:1px 5px; margin:0 0 0 3px }
@@ -1288,9 +1290,9 @@ DASHBOARD_BODY = r"""
     <div class="tbl-wrap" style="max-height:440px">
       <table class="full dense" id="objectsTable">
         <colgroup>
-          <col style="width:23%"><col style="width:9%">
-          <col style="width:7%"><col style="width:5%"><col style="width:5%"><col style="width:8%">
-          <col style="width:10%"><col style="width:22%"><col style="width:11%">
+          <col style="width:26%"><col style="width:10%">
+          <col style="width:8%"><col style="width:5%"><col style="width:5%"><col style="width:8%">
+          <col style="width:9%"><col style="width:16%"><col style="width:13%">
         </colgroup>
         <thead><tr>
           <th>Объект / подрядчик / УИН</th><th>Округ</th>
@@ -1460,9 +1462,9 @@ function renderObjTbl() {
     const dates = (!o.exp_in && !o.exp_done && !o.exp_due)
       ? ''
       : `<div class="dates" title="заход / получено / регламент (+42 раб. дня)">` +
-        `заход <b>${o.exp_in||'—'}</b><br>` +
-        `получено <b>${o.exp_done||'—'}</b><br>` +
-        `регламент <b class="${dueLate?'late':''}">${o.exp_due||'—'}</b></div>`;
+        `<div class="exp-line"><span>заход</span><b>${o.exp_in||'—'}</b></div>` +
+        `<div class="exp-line"><span>получено</span><b>${o.exp_done||'—'}</b></div>` +
+        `<div class="exp-line"><span>регламент</span><b class="${dueLate?'late':''}">${o.exp_due||'—'}</b></div></div>`;
     const expCell = `<div class="cell-stack">${overrun}${dates||'<span class="dates">—</span>'}</div>`;
     const statusCell = `<div class="cell-stack"><span class="pill ${STATUS_PILL[o.money_status]}" title="${STATUS_LABEL[o.money_status]}">${STATUS_SHORT[o.money_status]}</span>${overdue}</div>`;
     const tip = [o.full, o.rp ? 'РП: '+o.rp : '', o.contractor||'', 'УИН: '+o.uin].filter(Boolean).join(' · ');
