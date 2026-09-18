@@ -1149,11 +1149,16 @@ DASHBOARD_BODY = r"""
       <button class="fbtn" data-f="expfail">Экспертиза: отклонена / в экспертизе</button>
       <button class="fbtn" data-f="urgent">Просрочен сильнее типового + кредитует</button>
       <button class="fbtn" data-f="advance">Типовой аванс</button>
-      <button class="fbtn" data-f="priority">Топ приоритет</button>
     </div>
 
     <strong style="display:block;margin:18px 0 4px">Матрица риска: готовность vs оплата</strong>
-    <p class="note" style="margin-top:0">Снизу оплата, слева СГ. Диагональ — идеал «оплата = готовность», пунктир рядом — коридор ±10 п.п. Выше — подрядчик кредитует, ниже — оплата впереди. Размер точки — приоритет. Клик или «Динамика» — история школы.</p>
+    <p class="note" style="margin-top:0">Снизу оплата, слева СГ. Диагональ — идеал «оплата = готовность», пунктир рядом — коридор ±10 п.п. Выше — подрядчик кредитует, ниже — оплата впереди. Клик или «Динамика» — история школы.</p>
+    <div class="filterbar" id="matrixFilterBar" style="margin:10px 0 6px">
+      <button class="fbtn active" data-mf="all">Все</button>
+      <button class="fbtn" data-mf="credit">Подрядчик кредитует</button>
+      <button class="fbtn" data-mf="over">Избыток оплаты</button>
+      <button class="fbtn" data-mf="balanced">Всё нормально (в коридоре)</button>
+    </div>
     <div class="row" style="margin:8px 0 4px">
       <select id="selMatrixSchool" style="min-width:220px"></select>
       <button type="button" class="fbtn" id="btnPlayPath">Динамика</button>
@@ -1238,12 +1243,7 @@ document.getElementById('dK2').textContent = (DATA.objects.reduce((s,o)=>s+(o.co
 document.getElementById('dK3').textContent = (-DATA.objects.filter(o=>o.money_status==='credit').reduce((s,o)=>s+(o.gap_rub||0),0)/1000).toFixed(1);
 document.getElementById('dK4').textContent = DATA.objects.filter(o=>o.flags && o.flags.includes('не осваивает бюджет 2026')).length;
 
-let activeFilter = 'all', activeContractor = null;
-const priorityCutoff = (() => {
-  const scores = DATA.objects.map(o => o.risk_score || 0).filter(s => s > 0).sort((a,b)=>b-a);
-  if (!scores.length) return 999;
-  return scores[Math.min(9, scores.length - 1)]; // топ-10 по порогу 10-го
-})();
+let activeFilter = 'all', activeContractor = null, matrixFilter = 'all';
 
 function passesFilter(o) {
   if (activeContractor && o.contractor !== activeContractor) return false;
@@ -1253,7 +1253,13 @@ function passesFilter(o) {
   if (activeFilter==='expfail') return o.exp_last_result==='Отрицательное' || o.exp_pending;
   if (activeFilter==='urgent') return o.urgent_risk;
   if (activeFilter==='advance') return o.advance_stuck;
-  if (activeFilter==='priority') return (o.risk_score||0) >= priorityCutoff && (o.risk_score||0) > 0;
+  return true;
+}
+
+function passesMatrixFilter(o) {
+  if (matrixFilter==='credit') return o.money_status==='credit';
+  if (matrixFilter==='over') return o.money_status==='over';
+  if (matrixFilter==='balanced') return o.money_status==='balanced';
   return true;
 }
 
@@ -1296,6 +1302,14 @@ document.querySelectorAll('#filterBar .fbtn').forEach(btn => btn.onclick = () =>
   activeFilter = btn.dataset.f;
   stopPlay();
   renderObjTbl(); renderMatrix();
+});
+
+document.querySelectorAll('#matrixFilterBar .fbtn').forEach(btn => btn.onclick = () => {
+  document.querySelectorAll('#matrixFilterBar .fbtn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  matrixFilter = btn.dataset.mf;
+  stopPlay();
+  renderMatrix();
 });
 
 function renderRollup() {
@@ -1363,21 +1377,16 @@ const matrixZonesPlugin = {
   },
 };
 
-function matrixPointRadius(risk) {
-  if (!risk) return 5;
-  return Math.max(5, Math.min(14, 4 + Math.sqrt(risk) * 0.35));
-}
-
 let chartMatrix, matrixDatasets;
 let playUin = null, playIdx = 0, playTimer = null;
 const selMatrix = document.getElementById('selMatrixSchool');
 const btnPlay = document.getElementById('btnPlayPath');
 const playLabel = document.getElementById('matrixPlayLabel');
 
-DATA.objects.slice().sort((a,b)=>(b.risk_score||0)-(a.risk_score||0)).forEach(o => {
+DATA.objects.slice().sort((a,b)=>a.name.localeCompare(b.name, 'ru')).forEach(o => {
   const opt = document.createElement('option');
   opt.value = o.uin;
-  opt.textContent = o.name + (o.risk_score ? ` (${o.risk_score})` : '');
+  opt.textContent = o.name;
   selMatrix.appendChild(opt);
 });
 selMatrix.value = DATA.defaultUin;
@@ -1435,22 +1444,21 @@ function applyPlayOverlay(datasets) {
 }
 
 function renderMatrix() {
-  const matrixObjs = DATA.objects.filter(o => o.pct != null && passesFilter(o));
+  const matrixObjs = DATA.objects.filter(o => o.pct != null && passesFilter(o) && passesMatrixFilter(o));
   matrixDatasets = Object.keys(MATRIX_STATUS).map(status => {
     const cfg = MATRIX_STATUS[status];
     const pts = matrixObjs.filter(o => o.money_status === status && o.uin !== playUin);
     return {
       label: cfg.label,
       data: pts.map(o => ({
-        x: o.pct, y: o.sg, uin: o.uin, name: o.name, full: o.full,
-        risk: o.risk_score || 0, status,
+        x: o.pct, y: o.sg, uin: o.uin, name: o.name, full: o.full, status,
       })),
       backgroundColor: cfg.fill,
       borderColor: '#fff',
       borderWidth: 1.5,
       pointStyle: 'circle',
-      pointRadius: ctx => matrixPointRadius(ctx.raw && ctx.raw.risk),
-      pointHoverRadius: ctx => matrixPointRadius(ctx.raw && ctx.raw.risk) + 2,
+      pointRadius: 7,
+      pointHoverRadius: 9,
       order: 2,
     };
   }).filter(ds => ds.data.length);
@@ -1491,8 +1499,7 @@ function renderMatrix() {
             label: item => {
               const r = item.raw;
               if (r.d) return `на ${r.d}: оплата ${r.x}%, СГ ${r.y}%`;
-              const risk = r.risk ? `, приоритет ${r.risk}` : '';
-              return `оплата ${r.x}%, СГ ${r.y}%${risk}`;
+              return `оплата ${r.x}%, СГ ${r.y}%`;
             },
           },
         },
