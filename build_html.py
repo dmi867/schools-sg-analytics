@@ -1016,22 +1016,27 @@ HEAD_STYLE = r"""<!DOCTYPE html>
   table.full th { background:#EAF0F5; position:sticky; top:0; text-align:left; color:var(--faint); font-weight:600; font-size:.72rem; letter-spacing:.04em; text-transform:uppercase }
   table.full td.r,table.full th.r { text-align:right; font-variant-numeric:tabular-nums }
   .tbl-wrap { max-height:420px; overflow:auto; border:1px solid var(--line); border-radius:10px; margin-top:10px }
-  .tbl-wrap.fit { overflow-x:hidden }
-  table.dense { table-layout:fixed; width:100%; font-size:.82rem }
-  table.dense th,table.dense td { padding:7px 6px; vertical-align:middle }
-  table.dense th { font-size:.7rem; letter-spacing:.02em; white-space:nowrap }
+  table.dense { table-layout:fixed; width:100%; font-size:.8rem }
+  table.dense th,table.dense td { padding:8px 7px; vertical-align:top; overflow:hidden }
+  table.dense th { font-size:.68rem; letter-spacing:.02em; white-space:nowrap; vertical-align:middle }
   table.dense .clip { overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
-  table.dense .stack { line-height:1.3 }
+  table.dense .stack { line-height:1.3; min-width:0 }
   table.dense .stack .main { font-weight:600; display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
-  table.dense .stack .sub { font-size:.74rem; color:var(--muted); display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
-  table.dense .stack .uin { font-size:.68rem; color:var(--faint); font-variant-numeric:tabular-nums; display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
-  table.dense .dates { font-size:.68rem; line-height:1.35; color:var(--muted); white-space:nowrap }
+  table.dense .stack .sub { font-size:.72rem; color:var(--muted); display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+  table.dense .stack .uin { font-size:.66rem; color:var(--faint); font-variant-numeric:tabular-nums; display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+  table.dense .cell-stack { display:flex; flex-direction:column; align-items:flex-start; gap:4px; min-width:0; max-width:100% }
+  table.dense .cell-stack.end { align-items:flex-end; text-align:right }
+  table.dense .dates { font-size:.66rem; line-height:1.35; color:var(--muted); white-space:normal }
   table.dense .dates b { color:var(--text); font-weight:600 }
-  table.dense .dates .late { color:#A32E2E; font-weight:600 }
-  table.dense .pill { font-size:.7rem; padding:2px 7px; gap:4px; white-space:nowrap }
-  table.dense .pill.ok::before, table.dense .pill.warn::before, table.dense .pill.err::before { width:5px; height:5px }
-  table.dense .flag { font-size:.65rem; padding:1px 5px; margin:0 0 0 3px }
-  table.dense .money { font-size:.82rem }
+  table.dense .dates .late { color:#A32E2E }
+  table.dense .pill { font-size:.66rem; padding:2px 6px; gap:3px; white-space:nowrap; max-width:100%; overflow:hidden; text-overflow:ellipsis }
+  table.dense .pill.ok::before, table.dense .pill.warn::before, table.dense .pill.err::before { width:5px; height:5px; flex:none }
+  table.dense .flag { font-size:.62rem; padding:1px 5px; margin:0 0 0 3px }
+  table.dense .money { font-size:.78rem }
+  table.dense .amt { font-weight:600; font-variant-numeric:tabular-nums; font-size:.8rem; line-height:1.2 }
+  table.dense .pct { font-size:.68rem; color:var(--muted); line-height:1.2 }
+  table.dense .amt.neg, table.dense .pct.neg { color:#A32E2E }
+  table.dense .amt.pos, table.dense .pct.pos { color:#1E8449 }
   .flag { font-size:.72rem; padding:2px 7px; margin:1px 2px 1px 0; display:inline-block; background:var(--warn-bg); border:1px solid #EFCB84; border-radius:5px; color:#8A5E10 }
   .flag.warn { background:var(--err-bg); border-color:#F0B3B3; color:#A32E2E }
   .pill { display:inline-block; font-size:.72rem; font-weight:600; padding:2px 9px; border-radius:99px }
@@ -1280,27 +1285,26 @@ DASHBOARD_BODY = r"""
       <div class="chart" style="height:400px;margin:0"><canvas id="cMatrix"></canvas></div>
     </div>
 
-    <div class="tbl-wrap fit" style="max-height:420px">
+    <div class="tbl-wrap" style="max-height:440px">
       <table class="full dense" id="objectsTable">
         <colgroup>
-          <col style="width:22%"><col style="width:8%">
-          <col style="width:6%"><col style="width:4%"><col style="width:4%"><col style="width:7%">
-          <col style="width:8%"><col style="width:7%"><col style="width:7%"><col style="width:14%"><col style="width:13%">
+          <col style="width:23%"><col style="width:9%">
+          <col style="width:7%"><col style="width:5%"><col style="width:5%"><col style="width:8%">
+          <col style="width:10%"><col style="width:22%"><col style="width:11%">
         </colgroup>
         <thead><tr>
           <th>Объект / подрядчик / УИН</th><th>Округ</th>
           <th class="r" title="Цена контракта (весь срок), млн ₽">Контракт</th>
           <th class="r">СГ</th><th class="r" title="Оплата, %">Опл.</th>
           <th class="r" title="Разница СГ−оплата, млн ₽">Δ, млн</th>
-          <th>Статус</th><th>Ввод</th>
-          <th class="r" title="ТЧ — техчасть, СД — смета">Эксп.</th>
-          <th title="Заход, получение заключения и регламентный выход (+42 раб. дня от начала/захода)">Сроки эксп.</th>
-          <th class="r" title="Согласованная стоимость после экспертизы, млн ₽, и изменение к плановой">После эксп.</th>
+          <th title="Статус оплаты и срок ввода">Статус</th>
+          <th title="Статус экспертизы и сроки: заход, получение, регламент +42 раб. дня">Экспертиза</th>
+          <th class="r" title="Согласованная стоимость после экспертизы и изменение к плановой">После эксп.</th>
         </tr></thead>
         <tbody id="objTbl"></tbody>
       </table>
     </div>
-    <p class="note">«Сроки эксп.»: заход, получение заключения, регламентный выход (+42 раб. дня от начала экспертизы, иначе от захода; без праздников РФ). «После эксп.» — согласованная сумма и % к плановой.</p>
+    <p class="note">В «Экспертизе»: статус и сроки (заход / получено / регламент +42 раб. дня). «После эксп.» — сумма и % к плановой. Клик — «Один объект».</p>
   </div>
 
   <div class="tabpanel" data-tab="contractors" hidden>
@@ -1429,13 +1433,13 @@ function renderObjTbl() {
       : '—';
     let overrun;
     if (o.exp_pending && o.exp_last_result==='Положительное' && o.sd_confirmed) {
-      overrun = '<span class="pill warn" title="По прошлому заключению ТЧ+СД уже были; сейчас открыта новая заявка на экспертизу">повтор эксп.</span>';
+      overrun = '<span class="pill warn" title="По прошлому заключению ТЧ+СД уже были; сейчас открыта новая заявка">повтор</span>';
     } else if (o.exp_pending && o.exp_last_result==='Отрицательное') {
-      overrun = '<span class="pill warn" title="Прошлое заключение — отрицательное; открыта новая заявка">повтор после откл.</span>';
+      overrun = '<span class="pill warn" title="Прошлое заключение — отрицательное; открыта новая заявка">повтор↓</span>';
     } else if (o.exp_last_result==='Отрицательное') {
       overrun = '<span class="pill err" title="Отрицательное заключение">откл.</span>';
     } else if (o.exp_pending) {
-      overrun = '<span class="pill warn" title="Заявка ещё открыта, итогового заключения нет">в эксп.</span>';
+      overrun = '<span class="pill warn" title="Заявка ещё открыта">в эксп.</span>';
     } else if (o.exp_last_result==='Положительное' && o.sd_confirmed) {
       overrun = '<span class="pill ok" title="Техчасть и смета">ТЧ+СД</span>';
     } else if (o.exp_last_result==='Положительное' && !o.sd_confirmed) {
@@ -1443,6 +1447,7 @@ function renderObjTbl() {
     } else {
       overrun = o.entered_exp ? '<span class="pill warn">нет закл.</span>' : '—';
     }
+    const cls = o.exp_overrun>0 ? 'pos' : (o.exp_overrun<0 ? 'neg' : '');
     const pct = o.exp_overrun!=null ? `${o.exp_overrun>0?'+':''}${o.exp_overrun}%` : null;
     const after = o.exp_agreed_mln;
     const afterTip = o.exp_pending
@@ -1450,14 +1455,16 @@ function renderObjTbl() {
       : 'согласованная после экспертизы';
     const smeta = after==null
       ? '—'
-      : `<span class="money ${o.exp_overrun>0?'pos':(o.exp_overrun<0?'neg':'')}" title="${afterTip}">${after.toLocaleString('ru-RU')}${pct ? ' ('+pct+')' : ''}</span>`;
+      : `<div class="cell-stack end" title="${afterTip}"><span class="amt ${cls}">${after.toLocaleString('ru-RU')}</span>${pct?`<span class="pct ${cls}">${pct}</span>`:''}</div>`;
     const dueLate = o.exp_due_over;
     const dates = (!o.exp_in && !o.exp_done && !o.exp_due)
-      ? '—'
-      : `<div class="dates" title="заход → получение заключения; регламент = +42 раб. дня от начала экспертизы (или захода)">` +
-        `<div>заход <b>${o.exp_in||'—'}</b></div>` +
-        `<div>получено <b>${o.exp_done||'—'}</b></div>` +
-        `<div>регламент <b class="${dueLate?'late':''}">${o.exp_due||'—'}</b>${dueLate?' ⚠':''}</div></div>`;
+      ? ''
+      : `<div class="dates" title="заход / получено / регламент (+42 раб. дня)">` +
+        `заход <b>${o.exp_in||'—'}</b><br>` +
+        `получено <b>${o.exp_done||'—'}</b><br>` +
+        `регламент <b class="${dueLate?'late':''}">${o.exp_due||'—'}</b></div>`;
+    const expCell = `<div class="cell-stack">${overrun}${dates||'<span class="dates">—</span>'}</div>`;
+    const statusCell = `<div class="cell-stack"><span class="pill ${STATUS_PILL[o.money_status]}" title="${STATUS_LABEL[o.money_status]}">${STATUS_SHORT[o.money_status]}</span>${overdue}</div>`;
     const tip = [o.full, o.rp ? 'РП: '+o.rp : '', o.contractor||'', 'УИН: '+o.uin].filter(Boolean).join(' · ');
     const stack = `<div class="stack" title="${tip}">` +
       `<span class="main">${o.name}${o.advance_stuck?' <span class="flag">аванс</span>':''}</span>` +
@@ -1468,8 +1475,7 @@ function renderObjTbl() {
       `<td class="clip" title="${o.municipality||''}">${o.municipality||'—'}</td>` +
       `<td class="r">${o.contract_value??'—'}</td><td class="r">${o.sg}%</td><td class="r">${o.pct??'—'}%</td>` +
       `<td class="r">${moneyCell(o.gap_rub)}</td>` +
-      `<td><span class="pill ${STATUS_PILL[o.money_status]}" title="${STATUS_LABEL[o.money_status]}">${STATUS_SHORT[o.money_status]}</span></td>` +
-      `<td>${overdue}</td><td class="r">${overrun}</td><td>${dates}</td><td class="r">${smeta}</td></tr>`;
+      `<td>${statusCell}</td><td>${expCell}</td><td class="r">${smeta}</td></tr>`;
   }).join('');
   document.querySelectorAll('#objTbl tr.clickable').forEach(tr => tr.onclick = () => {
     sel.value = tr.dataset.uin;
@@ -1978,7 +1984,7 @@ def main():
         HEAD_STYLE.replace("__TITLE__", "СГ и выплаты — дашборд")
         .replace("__SUB__", sub + " — объекты, подрядчики, деньги против готовности")
         .replace("__NAV__", '<a class="navlink" href="index.html">→ Методика и выводы</a>')
-        .replace("__WRAP__", "1520")
+        .replace("__WRAP__", "1600")
         .replace("__CKS_LOGO__", CKS_LOGO_B64)
         + DASHBOARD_BODY
         + DASHBOARD_SCRIPT.replace("__DATA__", data_json)
