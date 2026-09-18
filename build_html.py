@@ -1185,7 +1185,7 @@ DASHBOARD_BODY = r"""
       <div class="kpi span2">
         <div class="n" id="dKObj"></div>
         <div class="l">объектов в портфеле</div>
-        <div class="sub">контракт <span id="dKContract"></span> млрд ₽</div>
+        <div class="sub">сумма контрактов (весь срок) <span id="dKContract"></span> млрд ₽</div>
       </div>
       <div class="kpi risk">
         <div class="n" id="dKCredit"></div>
