@@ -1326,9 +1326,10 @@ renderRollup();
 
 // Матрица риска + анимация траектории выбранной школы.
 const MATRIX_STATUS = {
-  credit:   { label: 'Кредитует подрядчик', color: '#E8A020', fill: 'rgba(232,160,32,.78)' },
-  balanced: { label: 'Баланс (±10 п.п.)', color: '#27AE60', fill: 'rgba(39,174,96,.85)' },
-  over:     { label: 'Избыток оплаты', color: '#D94040', fill: 'rgba(217,64,64,.78)' },
+  // коридор — зелёный; кредитует / избыток — не светофор (без жёлтого и красного)
+  credit:   { label: 'Кредитует подрядчик', color: '#1B8A9C', fill: 'rgba(27,138,156,.82)' },
+  balanced: { label: 'В коридоре (±10 п.п.)', color: '#2F9E6F', fill: 'rgba(47,158,111,.88)' },
+  over:     { label: 'Избыток оплаты', color: '#6B5B95', fill: 'rgba(107,91,149,.82)' },
   unknown:  { label: 'Нет данных', color: '#93A8BC', fill: 'rgba(147,168,188,.7)' },
 };
 
@@ -1343,19 +1344,19 @@ const matrixZonesPlugin = {
     // выше диагонали: СГ > оплаты
     ctx.beginPath();
     ctx.moveTo(x0, y0); ctx.lineTo(x0, y1); ctx.lineTo(x1, y1); ctx.closePath();
-    ctx.fillStyle = 'rgba(232,160,32,.09)';
+    ctx.fillStyle = 'rgba(27,138,156,.09)';
     ctx.fill();
     // ниже диагонали: оплата > СГ
     ctx.beginPath();
     ctx.moveTo(x0, y0); ctx.lineTo(x1, y0); ctx.lineTo(x1, y1); ctx.closePath();
-    ctx.fillStyle = 'rgba(217,64,64,.06)';
+    ctx.fillStyle = 'rgba(107,91,149,.07)';
     ctx.fill();
     // подписи зон
     ctx.font = "600 11px 'Golos Text', Manrope, system-ui, sans-serif";
-    ctx.fillStyle = 'rgba(138,94,16,.55)';
+    ctx.fillStyle = 'rgba(18,104,128,.5)';
     ctx.textAlign = 'left';
     ctx.fillText('кредитует', x0 + 10, y1 + 18);
-    ctx.fillStyle = 'rgba(163,46,46,.45)';
+    ctx.fillStyle = 'rgba(107,91,149,.5)';
     ctx.textAlign = 'right';
     ctx.fillText('избыток оплаты', x1 - 10, y0 - 10);
     ctx.restore();
