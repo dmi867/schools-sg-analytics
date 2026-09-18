@@ -1153,16 +1153,15 @@ DASHBOARD_BODY = r"""
 
     <strong style="display:block;margin:18px 0 4px">Матрица риска: готовность vs оплата</strong>
     <p class="note" style="margin-top:0">Снизу оплата, слева СГ. Диагональ — идеал «оплата = готовность», пунктир рядом — коридор ±10 п.п. Выше — подрядчик кредитует, ниже — оплата впереди. Клик или «Динамика» — история школы.</p>
-    <div class="filterbar" id="matrixFilterBar" style="margin:10px 0 6px">
-      <button class="fbtn active" data-mf="all">Все</button>
-      <button class="fbtn" data-mf="balanced">В коридоре</button>
-      <button class="fbtn" data-mf="credit">Подрядчик кредитует</button>
-      <button class="fbtn" data-mf="over">Избыток оплаты</button>
-    </div>
     <div class="row" style="margin:8px 0 4px">
       <select id="selMatrixSchool" style="min-width:220px"></select>
       <button type="button" class="fbtn" id="btnPlayPath">Динамика</button>
-      <span class="note" id="matrixPlayLabel" style="margin:0"></span>
+      <div class="filterbar" id="matrixFilterBar" style="margin:0">
+        <button class="fbtn active" data-mf="all">Все</button>
+        <button class="fbtn" data-mf="balanced">В коридоре</button>
+        <button class="fbtn" data-mf="credit">Подрядчик кредитует</button>
+        <button class="fbtn" data-mf="over">Избыток оплаты</button>
+      </div>
     </div>
     <div class="box" style="padding:12px 14px 8px;margin:8px 0 0">
       <div class="chart" style="height:520px;margin:0"><canvas id="cMatrix"></canvas></div>
@@ -1264,7 +1263,7 @@ function passesMatrixFilter(o) {
 }
 
 function renderObjTbl() {
-  const rows = DATA.objects.filter(passesFilter).sort((a,b)=>(b.risk_score||0)-(a.risk_score||0));
+  const rows = DATA.objects.filter(o => passesFilter(o) && passesMatrixFilter(o)).sort((a,b)=>(b.risk_score||0)-(a.risk_score||0));
   document.getElementById('objTbl').innerHTML = rows.map(o => {
     const days = o.days_to_open;
     const overdue = days!=null ? (days<0 ? `<span class="pill err">просрочка ${Math.abs(days)} дн.</span>` : `<span class="pill ok">осталось ${days} дн.</span>`) : '—';
@@ -1309,6 +1308,7 @@ document.querySelectorAll('#matrixFilterBar .fbtn').forEach(btn => btn.onclick =
   btn.classList.add('active');
   matrixFilter = btn.dataset.mf;
   stopPlay();
+  renderObjTbl();
   renderMatrix();
 });
 
@@ -1381,7 +1381,6 @@ let chartMatrix, matrixDatasets;
 let playUin = null, playIdx = 0, playTimer = null;
 const selMatrix = document.getElementById('selMatrixSchool');
 const btnPlay = document.getElementById('btnPlayPath');
-const playLabel = document.getElementById('matrixPlayLabel');
 
 DATA.objects.slice().sort((a,b)=>a.name.localeCompare(b.name, 'ru')).forEach(o => {
   const opt = document.createElement('option');
@@ -1406,10 +1405,6 @@ function setPlaySchool(uin, rebuild) {
   playUin = uin;
   playIdx = Math.max(0, pathFor(uin).length - 1);
   if (selMatrix.value !== uin) selMatrix.value = uin;
-  const path = pathFor(uin);
-  playLabel.textContent = path.length
-    ? `точек в истории: ${path.length} · сейчас ${path[playIdx].d}`
-    : 'нет траектории оплаты';
   if (rebuild !== false) renderMatrix();
 }
 
@@ -1542,10 +1537,7 @@ function renderMatrix() {
 selMatrix.onchange = () => setPlaySchool(selMatrix.value);
 btnPlay.onclick = () => {
   const path = pathFor(playUin);
-  if (path.length < 2) {
-    playLabel.textContent = 'мало точек для анимации';
-    return;
-  }
+  if (path.length < 2) return;
   if (playTimer) { stopPlay(); return; }
   playIdx = 0;
   btnPlay.textContent = 'Стоп';
@@ -1555,11 +1547,9 @@ btnPlay.onclick = () => {
     if (playIdx >= path.length) {
       playIdx = path.length - 1;
       stopPlay();
-      playLabel.textContent = `готово · ${path[playIdx].d} · СГ ${path[playIdx].sg}% / оплата ${path[playIdx].pay}%`;
       renderMatrix();
       return;
     }
-    playLabel.textContent = `${path[playIdx].d} · СГ ${path[playIdx].sg}% / оплата ${path[playIdx].pay}%`;
     renderMatrix();
   }, 280);
 };
