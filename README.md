@@ -42,6 +42,22 @@ python3 scripts/convert_per_object.py data/raw
 python3 build_html.py
 ```
 
+Либо заполнить единый шаблон (одна таблица: СГ план/факт + платежи):
+
+```bash
+python3 scripts/make_sg_pay_template.py          # создать/обновить шаблон
+# заполнить data/templates/шаблон_СГ_и_платежи.xlsx (лист «Данные»)
+python3 scripts/import_sg_pay_template.py data/templates/шаблон_СГ_и_платежи.xlsx
+python3 build_html.py
+```
+
+Либо динамика Минстроя из папки срезов `Simple_List/` (без сноса):
+
+```bash
+python3 scripts/build_minstroy_dynamics.py
+python3 build_html.py
+```
+
 Затем:
 
 ```bash

@@ -172,6 +172,111 @@ def fmt_date(d):
     return d.strftime("%d.%m.%y") if d else None
 
 
+def snap_to_traj(dt, pts):
+    """Ближайшая точка ряда СГ — для вертикального маркера на category-оси Chart.js."""
+    if not dt or not pts:
+        return None
+    return min(pts, key=lambda p: abs((datetime.strptime(p["d"], "%d.%m.%y") - dt).days))["d"]
+
+
+def lag_days(plan, fact, today=None):
+    """Факт−план в днях; если факта нет — сегодня−план (отрицательный = ещё есть запас)."""
+    if not plan:
+        return None
+    ref = fact or today or datetime.now()
+    return (ref.date() - plan.date()).days
+
+
+def build_kt_marks(pts, exp, opening_plan, opening_fact, exp_done):
+    """Два маркера: экспертиза и открытие (финал). Факт открытия — сплошная, план — пунктир."""
+    marks = []
+    exp_dt = exp_done or exp.get("fact_end") or exp.get("plan_end")
+    if exp_dt:
+        x = snap_to_traj(exp_dt, pts)
+        if x:
+            is_fact = bool(exp_done or exp.get("fact_end"))
+            marks.append(
+                {
+                    "id": "exp",
+                    "label": "Эксп.",
+                    "x": x,
+                    "kind": "fact" if is_fact else "plan",
+                    "color": "#2E7CC4",
+                    "date": fmt_date(exp_dt),
+                    "lag": None,
+                }
+            )
+    # Открытие: факт — сплошная; план — пунктир (если дата другая или факта ещё нет).
+    if opening_fact:
+        if opening_plan and opening_plan.date() != opening_fact.date():
+            x = snap_to_traj(opening_plan, pts)
+            if x:
+                marks.append(
+                    {
+                        "id": "open_plan",
+                        "label": "Открытие план",
+                        "x": x,
+                        "kind": "plan",
+                        "color": "#143260",
+                        "date": fmt_date(opening_plan),
+                        "lag": lag_days(opening_plan, opening_fact),
+                    }
+                )
+        x = snap_to_traj(opening_fact, pts)
+        if x:
+            marks.append(
+                {
+                    "id": "open_fact",
+                    "label": "Открытие",
+                    "x": x,
+                    "kind": "fact",
+                    "color": "#143260",
+                    "date": fmt_date(opening_fact),
+                    "lag": lag_days(opening_plan, opening_fact) if opening_plan else None,
+                }
+            )
+    elif opening_plan:
+        x = snap_to_traj(opening_plan, pts)
+        if x:
+            marks.append(
+                {
+                    "id": "open_plan",
+                    "label": "Открытие",
+                    "x": x,
+                    "kind": "plan",
+                    "color": "#143260",
+                    "date": fmt_date(opening_plan),
+                    "lag": lag_days(opening_plan, None),
+                }
+            )
+    return marks
+
+
+def schedule_hint(sg_plan_gap, opening_plan, opening_fact, today=None):
+    """Короткая строка: СГ к плану + открытие (факт из КСГ или дни до плана)."""
+    today = today or datetime.now()
+    bits = []
+    if sg_plan_gap is not None:
+        if sg_plan_gap < -5:
+            bits.append(f"СГ {sg_plan_gap:.0f} п.п. к плану")
+        elif sg_plan_gap > 5:
+            bits.append(f"СГ +{sg_plan_gap:.0f} п.п. к плану")
+        else:
+            bits.append("СГ ≈ план")
+    if opening_fact:
+        bits.append(f"открыто {fmt_date(opening_fact)}")
+        if opening_plan:
+            lag = (opening_fact.date() - opening_plan.date()).days
+            if lag > 0:
+                bits.append(f"+{lag} дн. к плану")
+            elif lag < 0:
+                bits.append(f"{lag} дн. к плану")
+    elif opening_plan:
+        d = (opening_plan.date() - today.date()).days
+        bits.append(f"открытие −{abs(d)} дн." if d < 0 else f"открытие через {d} дн.")
+    return " · ".join(bits) if bits else None
+
+
 def add_workdays(start, n):
     """Прибавить n рабочих дней (пн–пт; без праздников РФ)."""
     if not start or n is None:
@@ -197,9 +302,65 @@ def kt_bounds(items):
     }
 
 
+# Открытие — КТ верхнего уровня; пресс-релиз / фотоотчёт — нижний уровень той же ветки.
+OPEN_PARENT_PROCS = {
+    "открытие",
+    "открытие объекта",
+    "ввод в эксплуатацию",
+    "акт открытия",
+}
+OPEN_CHILD_PROCS = {
+    "пресс-релиз",
+    "пресс релиз",
+    "фотоотчет",
+    "начало функционирования объекта (фото)",
+    "начало функционирования объекта (пресс-релиз)",
+    "начало функционировния объекта (пресс-релиз)",  # опечатка в источнике
+}
+
+
+def _norm_proc(proc):
+    return " ".join(str(proc or "").strip().lower().split())
+
+
+def resolve_opening(uin_kt, sl_opening_plan=None):
+    """План/факт открытия из КСГ: сначала родительская КТ «Открытие», иначе дочерние.
+
+    Факт: fact_end (или fact_start) родителя → иначе max по пресс-релизу/фотоотчёту.
+    План: plan_end родителя → иначе дочерних → иначе Simple List «Планируемая дата открытия».
+    """
+    parent_items, child_items = [], []
+    for proc, items in (uin_kt or {}).items():
+        key = _norm_proc(proc)
+        if key in OPEN_PARENT_PROCS or key.startswith("открытие"):
+            parent_items.extend(items)
+        elif key in OPEN_CHILD_PROCS or "пресс" in key or "фотоотчет" in key or "функцион" in key:
+            child_items.extend(items)
+
+    parent = kt_bounds(parent_items)
+    child = kt_bounds(child_items)
+
+    fact = parent.get("fact_end") or parent.get("fact_start")
+    source = "открытие" if fact else None
+    if not fact:
+        fact = child.get("fact_end") or child.get("fact_start")
+        if fact:
+            source = "пресс/фото"
+
+    plan = parent.get("plan_end") or child.get("plan_end") or sl_opening_plan
+    if not source and plan:
+        source = "план"
+
+    return {"plan": plan, "fact": fact, "source": source}
+
+
 def load_ksg():
-    path = RAW_DIR / "1708_КСГ+Экспертиза.xlsx"
-    if not path.exists():
+    # Минстроевский срез обычно полнее по фактам открытия (пресс/фото); 1708 — запасной.
+    for name in ("КСГ+Экспертиза_минстрой.xlsx", "1708_КСГ+Экспертиза.xlsx"):
+        path = RAW_DIR / name
+        if path.exists():
+            break
+    else:
         return {}
     wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
     ws = wb.active
@@ -223,7 +384,7 @@ def load_ksg():
     return kt
 
 
-SIMPLE_LIST_FILE = "1409_Акцент_Simple List.xlsx"
+SIMPLE_LIST_FILE = "2510_Акцент_Simple List.xlsx"
 
 
 def load_simple_list():
@@ -358,6 +519,14 @@ def load_per_object():
     path = DATA_DIR / "per_object.json"
     if not path.exists():
         return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def load_minstroy():
+    """Динамика Минстроя из срезов Simple_List (см. scripts/build_minstroy_dynamics.py)."""
+    path = DATA_DIR / "minstroy_dynamics.json"
+    if not path.exists():
+        return None
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -524,11 +693,14 @@ def load_data():
             flags.append("не осваивает бюджет 2026")
 
         exp_ref = info.get("exp_done") or exp.get("plan_end")
-        exp_marker = None
-        if exp_ref and pts:
-            exp_marker = min(
-                pts, key=lambda p: abs((datetime.strptime(p["d"], "%d.%m.%y") - exp_ref).days)
-            )["d"]
+        exp_marker = snap_to_traj(exp_ref, pts)
+
+        opening = resolve_opening(uin_kt, info.get("opening_plan"))
+        opening_plan = opening.get("plan")
+        opening_fact = opening.get("fact")
+
+        marks = build_kt_marks(pts, exp, opening_plan, opening_fact, info.get("exp_done"))
+        sched = schedule_hint(sg_plan_gap, opening_plan, opening_fact)
 
         kt_dates[uin] = {
             "exp_plan": fmt_date(exp.get("plan_end")),
@@ -536,15 +708,28 @@ def load_data():
             "exp_sl": fmt_date(info.get("exp_done")),
             "exp_marker": exp_marker,
             "smr_start": fmt_date(smr.get("fact_start")),
-            "ctr_fact": fmt_date(ctr.get("fact_start") or info.get("ctr_fact")),
+            "smr_plan_end": fmt_date(smr.get("plan_end")),
+            "smr_fact_end": fmt_date(smr.get("fact_end")),
+            "ctr_fact": fmt_date(ctr.get("fact_end") or ctr.get("fact_start") or info.get("ctr_fact")),
+            "ctr_plan": fmt_date(ctr.get("plan_end")),
+            "open_plan": fmt_date(opening_plan),
+            "open_fact": fmt_date(opening_fact),
+            "open_source": opening.get("source"),
             "rs_plan": fmt_date(rs.get("plan_end")),
             "rs_fact": fmt_date(rs.get("fact_end")),
+            "marks": marks,
+            "schedule": sched,
         }
 
         contractor = short_contractor(info.get("contractor"))
         addr = addresses.get(uin, {})
-        opening_plan = info.get("opening_plan")
-        days_to_open = (opening_plan.date() - datetime.now().date()).days if opening_plan else None
+        # Просрочка по открытию — только если факта ещё нет; иначе объект уже открыт.
+        if opening_fact:
+            days_to_open = None
+        elif opening_plan:
+            days_to_open = (opening_plan.date() - datetime.now().date()).days
+        else:
+            days_to_open = None
 
         program_years = info.get("program_years", [])
         program_unbacked = round(
@@ -670,6 +855,7 @@ def load_data():
                 "exp_due_over": exp_due_over,
                 "entered_exp": info.get("entered_exp", False),
                 "opening_plan": fmt_date(opening_plan),
+                "opening_fact": fmt_date(opening_fact),
                 "days_to_open": days_to_open,
                 "program_years": program_years,
                 "program_unbacked": program_unbacked,
@@ -1097,6 +1283,18 @@ HEAD_STYLE = r"""<!DOCTYPE html>
   tr.clickable:hover { background:var(--accent-dim) }
   tr.row-active { background:var(--accent-dim) }
   .card-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:10px; margin:14px 0 }
+  .quad-cards { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin:10px 0 12px }
+  .quad-card { background:var(--surface); border:1px solid var(--line); border-left:4px solid var(--q-color,#93A8BC); border-radius:10px; padding:10px 12px; cursor:pointer; box-shadow:0 1px 2px rgba(13,32,64,.04) }
+  .quad-card:hover { border-color:var(--q-color) }
+  .quad-card.active { background:var(--accent-dim); box-shadow:inset 0 0 0 1px var(--q-color) }
+  .quad-card .qn { font-size:1.35rem; font-weight:700; color:var(--navy); font-variant-numeric:tabular-nums; line-height:1.1 }
+  .quad-card .ql { font-size:.78rem; font-weight:600; color:var(--text); margin-top:4px }
+  .quad-card .qd { font-size:.72rem; color:var(--muted); margin-top:4px; line-height:1.35 }
+  .quad-tools { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:8px 0 }
+  .quad-tools label { font-size:.82rem; color:var(--muted); font-weight:600 }
+  .quad-tools input[type=number] { width:64px; font:inherit; padding:4px 6px; border:1px solid var(--line); border-radius:6px }
+  @media(max-width:900px) { .quad-cards { grid-template-columns:repeat(2,1fr) } }
+  @media(max-width:560px) { .quad-cards { grid-template-columns:1fr } }
 </style>
 </head>
 <body>
@@ -1257,6 +1455,7 @@ DASHBOARD_BODY = r"""
   <div class="tabbar" id="tabBar">
     <button class="tabbtn active" data-tab="objects">Объекты</button>
     <button class="tabbtn" data-tab="contractors">Подрядчики и риск</button>
+    <button class="tabbtn" data-tab="minstroy">Минстрой (динамика)</button>
     <button class="tabbtn" data-tab="one">Один объект</button>
   </div>
 
@@ -1284,7 +1483,7 @@ DASHBOARD_BODY = r"""
       </div>
     </div>
     <div class="box" style="padding:12px 14px 8px;margin:8px 0 0">
-      <div class="chart" style="height:400px;margin:0"><canvas id="cMatrix"></canvas></div>
+      <div class="chart" style="height:480px;margin:0"><canvas id="cMatrix"></canvas></div>
     </div>
 
     <div class="tbl-wrap" style="max-height:440px">
@@ -1312,19 +1511,33 @@ DASHBOARD_BODY = r"""
   </div>
 
   <div class="tabpanel" data-tab="contractors" hidden>
-    <strong style="display:block;margin-top:4px;margin-bottom:8px">Подрядчики: портфель и финансирование</strong>
-    <p class="note" style="margin-top:0">По подрядчику: контракты за весь срок и лимит финансирования на 2026 год — сколько уже освоено и сколько осталось. «Кредитует» — построено сверх оплаты; «Доля риска» — какой % этой суммы по портфелю у него. Клик — состав портфеля ниже.</p>
+    <strong style="display:block;margin-top:4px;margin-bottom:6px">Устойчивость портфеля подрядчика</strong>
+    <p class="note" style="margin-top:0">Средние СГ и % оплаты по объектам подрядчика, <strong>взвешенные по цене контракта</strong>. В среднее сначала идут объекты без типового аванса; если таких нет — считаем по всем (иначе подрядчик выпадает из групп). Пороги делят на 4 группы. Клик по карточке — фильтр; повторный клик снимает.</p>
+    <div class="quad-tools">
+      <label>Порог СГ, % <input type="number" id="qGotov" min="0" max="100" step="5" value="50"></label>
+      <label>Порог оплаты, % <input type="number" id="qPctpay" min="0" max="100" step="5" value="50"></label>
+      <button type="button" class="fbtn" id="qReset">Сбросить фильтр</button>
+    </div>
+    <div class="quad-cards" id="quadCards"></div>
+    <div class="box" style="padding:12px 14px 8px;margin:0 0 16px">
+      <div class="chart" style="height:360px;margin:0"><canvas id="cQuad"></canvas></div>
+    </div>
+    <p class="note" style="margin-top:0">Ось X — стройготовность, Y — оплата. Размер точки — сумма <strong>цен контрактов</strong> по объектам подрядчика в нашем портфеле. Крест — пороги.</p>
+
+    <strong style="display:block;margin-top:18px;margin-bottom:8px">Подрядчики: портфель и финансирование</strong>
+    <p class="note" style="margin-top:0">По подрядчику: сумма цен контрактов за весь срок и лимит финансирования на 2026 год — сколько уже освоено и сколько осталось. «Кредитует» — построено сверх оплаты; «Доля риска» — какой % этой суммы по портфелю у него. Клик — состав портфеля ниже.</p>
     <div class="tbl-wrap">
       <table class="full dense" id="contrTable">
         <colgroup>
-          <col style="width:20%"><col style="width:7%">
-          <col style="width:11%"><col style="width:14%"><col style="width:11%">
-          <col style="width:11%"><col style="width:10%"><col style="width:8%"><col style="width:8%">
+          <col style="width:18%"><col style="width:10%"><col style="width:6%">
+          <col style="width:10%"><col style="width:12%"><col style="width:10%">
+          <col style="width:10%"><col style="width:9%"><col style="width:7%"><col style="width:8%">
         </colgroup>
         <thead><tr>
           <th>Подрядчик</th>
+          <th>Группа</th>
           <th class="r">Объектов</th>
-          <th class="r" title="Сумма контрактов по всем его объектам, весь срок">Контракт, млн ₽</th>
+          <th class="r" title="Сумма цен контрактов по всем его объектам, весь срок">Контракт, млн ₽</th>
           <th class="r" title="Лимит финансирования на 2026 год по всем объектам подрядчика">Финансирование 2026, млн ₽</th>
           <th class="r" title="Сколько из финансирования 2026 уже освоено">Освоено в 2026, млн ₽</th>
           <th class="r" title="Финансирование 2026 минус освоено">Остаток 2026, млн ₽</th>
@@ -1359,6 +1572,60 @@ DASHBOARD_BODY = r"""
     </div>
   </div>
 
+  <div class="tabpanel" data-tab="minstroy" hidden>
+    <strong style="display:block;margin-top:4px;margin-bottom:6px">Минстрой: динамика по срезам Simple List</strong>
+    <p class="note" style="margin-top:0" id="msNote"></p>
+    <div class="kpis four" style="margin:10px 0 14px">
+      <div class="kpi"><div class="n" id="msN">—</div><div class="l">объектов (без сноса)</div></div>
+      <div class="kpi"><div class="n" id="msMedSg">—</div><div class="l">медиана СГ, %</div></div>
+      <div class="kpi"><div class="n" id="msMedPct">—</div><div class="l">медиана оплаты, %</div></div>
+      <div class="kpi"><div class="n" id="msCredit">—</div><div class="l">кредитует подрядчик</div></div>
+    </div>
+    <div class="filterbar" id="msFilterBar">
+      <button class="fbtn active" data-ms="all">Все виды</button>
+      <button class="fbtn" data-ms="капремонт">Капремонт</button>
+      <button class="fbtn" data-ms="строительство">Строительство</button>
+      <button class="fbtn" data-ms="реконструкция">Реконструкция</button>
+      <button class="fbtn" data-ms="прочее">Прочее</button>
+    </div>
+    <div class="filterbar" id="msStatusBar" style="margin-top:-6px">
+      <button class="fbtn active" data-msst="all">Все статусы</button>
+      <button class="fbtn" data-msst="credit">Кредитует</button>
+      <button class="fbtn" data-msst="over">Избыток оплаты</button>
+      <button class="fbtn" data-msst="balanced">Баланс</button>
+      <button class="fbtn" data-msst="sg">СГ &gt; 0</button>
+      <button class="fbtn" data-msst="exp">Есть экспертиза</button>
+      <button class="fbtn" data-msst="noexp">Без экспертизы</button>
+      <button class="fbtn" data-msst="overrun">Удорожание сметы</button>
+      <button class="fbtn" data-msst="cheap">Удешевление сметы</button>
+    </div>
+    <div class="row" style="margin:8px 0 4px;flex-wrap:wrap">
+      <select id="selMs" style="min-width:280px;max-width:100%"></select>
+      <span class="note" id="msSelMeta" style="margin:0"></span>
+    </div>
+    <div class="box" style="padding:12px 14px 8px;margin:8px 0">
+      <div class="chart" style="height:520px;margin:0"><canvas id="cMsMatrix"></canvas></div>
+    </div>
+    <p class="note" style="margin-top:0">Матрица: снизу оплата, слева СГ. Зелёная полоса — коридор ±10 п.п. Клик по точке — траектория и фильтр таблицы (клик по пустому — снять). На траектории синяя вертикаль — заключение экспертизы.</p>
+    <div class="box" style="padding:12px 14px 8px;margin:12px 0">
+      <div class="chart" style="height:300px;margin:0"><canvas id="cMsTraj"></canvas></div>
+    </div>
+    <div class="tbl-wrap" style="max-height:420px">
+      <table class="full dense">
+        <thead><tr>
+          <th>Объект</th><th>Вид работ</th><th>Подрядчик</th>
+          <th class="r">Лимит, млн</th><th class="r">Контракт, млн</th>
+          <th class="r">СГ, %</th><th class="r">Оплата, %</th>
+          <th class="r" title="Согласованная стоимость объекта экспертизы">После эксп., млн</th>
+          <th class="r" title="Удорожание: согласованная − плановая">Δ сметы</th>
+          <th title="Дата получения заключения экспертизы">Экспертиза</th>
+          <th class="r">Δ СГ</th><th>Статус</th>
+        </tr></thead>
+        <tbody id="msTbl"></tbody>
+      </table>
+    </div>
+  </div>
+
   <div class="tabpanel" data-tab="one" hidden>
     <div class="row">
       <select id="selSchool"></select>
@@ -1366,8 +1633,10 @@ DASHBOARD_BODY = r"""
       <span class="note" id="metaSchool" style="margin:0"></span>
     </div>
     <div class="chart"><canvas id="cTraj"></canvas></div>
-    <p class="note" id="ktLine"></p>
-    <p class="note">Синяя — факт, пунктир — план, зелёная — % от суммы контракта, уже выплаченной на эту дату.</p>
+    <p class="note" id="schedLine" style="font-weight:600;margin:8px 0 4px"></p>
+    <p class="note" id="ktLine" style="margin:0"></p>
+    <div id="flagLine" style="margin:6px 0 0"></div>
+    <p class="note" style="margin-top:8px">Синяя — СГ (факт / план), зелёная — оплата. Вертикали: синяя — экспертиза, тёмная — открытие (факт из КСГ: открытие → иначе пресс/фото; пунктир — план).</p>
 
     <p class="note" style="margin-top:14px"><strong>Лимит по годам (госпрограмма), млн ₽</strong> — план по годам может не совпадать с суммой контракта: контракт заключается на часть лимита, остальное — лимит без обязательств.</p>
     <table class="mini">
@@ -1445,11 +1714,13 @@ function renderObjTbl() {
     .sort((a,b) => (a.gap_rub||0) - (b.gap_rub||0));
   document.getElementById('objTbl').innerHTML = rows.map(o => {
     const days = o.days_to_open;
-    const overdue = days!=null
-      ? (days<0
-        ? `<span class="pill err" title="просрочка ${Math.abs(days)} дн.">−${Math.abs(days)} дн.</span>`
-        : `<span class="pill ok" title="осталось ${days} дн.">+${days} дн.</span>`)
-      : '—';
+    const overdue = o.opening_fact
+      ? `<span class="pill ok" title="факт открытия (КСГ)">открыто ${o.opening_fact}</span>`
+      : (days!=null
+        ? (days<0
+          ? `<span class="pill err" title="просрочка ${Math.abs(days)} дн. к плану открытия">−${Math.abs(days)} дн.</span>`
+          : `<span class="pill ok" title="осталось ${days} дн. до плана открытия">+${days} дн.</span>`)
+        : '—');
     let overrun;
     if (o.exp_pending && o.exp_last_result==='Положительное' && o.sd_confirmed) {
       overrun = '<span class="pill warn" title="По прошлому заключению ТЧ+СД уже были; сейчас открыта новая заявка">повтор</span>';
@@ -1522,12 +1793,34 @@ document.querySelectorAll('#matrixFilterBar .fbtn').forEach(btn => btn.onclick =
   renderMatrix();
 });
 
-function renderRollup() {
+const QUAD_META = {
+  stable:  { label:'Финансово устойчивые',  color:'#2F9E6F', desc:'СГ и оплата обе не ниже порога — финансирование идёт соразмерно работам.' },
+  cashgap: { label:'Риск кассового разрыва', color:'#1B8A9C', desc:'СГ выше порога, оплата ниже — подрядчик кредитует стройку (как «Кредитует» на матрице объектов).' },
+  advance: { label:'Аванс опережает работы', color:'#6B5B95', desc:'Оплата выше порога при низкой СГ — риск переплаты относительно факта.' },
+  early:   { label:'Ранняя стадия',          color:'#2E7CC4', desc:'И СГ, и оплата ниже порога — типично для недавно стартовавших.' },
+};
+let quadState = { qGotov:50, qPctpay:50, active:null };
+let chartQuad;
+
+function quadrantOf(avgSg, avgPct) {
+  if (avgSg == null || avgPct == null) return null;
+  const hiG = avgSg >= quadState.qGotov;
+  const hiP = avgPct >= quadState.qPctpay;
+  if (hiG && hiP) return 'stable';
+  if (hiG && !hiP) return 'cashgap';
+  if (!hiG && hiP) return 'advance';
+  return 'early';
+}
+
+/** Агрегат по подрядчику: средние СГ/оплата взвешены по цене контракта; типовой аванс исключаем. */
+function buildContractorRows() {
   const byC = {};
   DATA.objects.forEach(o => {
     const c = o.contractor || '—';
     const e = byC[c] || (byC[c] = {
       contractor:c, n:0, contract:0, credit:0, plan2026:0, osv2026:0, no_budget2026:0,
+      wSg:0, wPct:0, w:0, n_excl:0,
+      fSg:0, fPct:0, f:0,
     });
     e.n++;
     e.contract += o.contract_value || 0;
@@ -1536,17 +1829,152 @@ function renderRollup() {
     e.plan2026 += plan;
     if (plan && o.osv2026_pct != null) e.osv2026 += plan * Number(o.osv2026_pct) / 100;
     if (o.flags && o.flags.includes('не осваивает бюджет 2026')) e.no_budget2026++;
+    const cv = o.contract_value || 0;
+    if (o.sg != null && o.pct != null && cv > 0) {
+      // fallback-пул — все объекты; основное среднее — без типового аванса
+      e.fSg += o.sg * cv; e.fPct += o.pct * cv; e.f += cv;
+      if (o.advance_stuck) e.n_excl++;
+      else { e.wSg += o.sg * cv; e.wPct += o.pct * cv; e.w += cv; }
+    }
   });
-  const rows = Object.values(byC).sort((a,b) => (b.credit - a.credit) || (b.plan2026 - a.plan2026));
+  return Object.values(byC).map(e => {
+    const useW = e.w > 0;
+    const den = useW ? e.w : e.f;
+    const avg_sg = den ? Math.round((useW ? e.wSg : e.fSg) / den * 10) / 10 : null;
+    const avg_pct = den ? Math.round((useW ? e.wPct : e.fPct) / den * 10) / 10 : null;
+    const gap = (avg_sg != null && avg_pct != null) ? Math.round((avg_sg - avg_pct) * 10) / 10 : null;
+    return Object.assign(e, {
+      avg_sg, avg_pct, gap,
+      avg_from_advance_only: !useW && e.f > 0,
+      quad: quadrantOf(avg_sg, avg_pct),
+    });
+  }).sort((a,b) => (b.credit - a.credit) || (b.plan2026 - a.plan2026));
+}
+
+function renderQuadCards(rows) {
+  const counts = { stable:0, cashgap:0, advance:0, early:0 };
+  rows.forEach(r => { if (r.quad) counts[r.quad]++; });
+  document.getElementById('quadCards').innerHTML = Object.keys(QUAD_META).map(k => {
+    const m = QUAD_META[k];
+    const active = quadState.active === k ? ' active' : '';
+    return `<div class="quad-card${active}" data-quad="${k}" style="--q-color:${m.color}">` +
+      `<div class="qn">${counts[k]}</div><div class="ql">${m.label}</div>` +
+      `<div class="qd">${m.desc}</div></div>`;
+  }).join('');
+  document.querySelectorAll('#quadCards .quad-card').forEach(el => {
+    el.onclick = () => {
+      const k = el.dataset.quad;
+      quadState.active = quadState.active === k ? null : k;
+      renderRollup();
+    };
+  });
+}
+
+const quadCrossPlugin = {
+  id: 'quadCross',
+  beforeDatasetsDraw(chart) {
+    const { ctx, scales: { x, y } } = chart;
+    if (!x || !y) return;
+    const gx = x.getPixelForValue(quadState.qGotov);
+    const py = y.getPixelForValue(quadState.qPctpay);
+    const x0 = x.left, x1 = x.right, y0 = y.top, y1 = y.bottom;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(20,50,96,.35)';
+    ctx.setLineDash([5, 4]);
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(gx, y0); ctx.lineTo(gx, y1); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x0, py); ctx.lineTo(x1, py); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(20,50,96,.55)';
+    ctx.font = '11px Golos Text, Manrope, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('СГ ' + quadState.qGotov + '%', gx, y0 + 12);
+    ctx.textAlign = 'left';
+    ctx.fillText('оплата ' + quadState.qPctpay + '%', x0 + 6, py - 6);
+    ctx.restore();
+  },
+};
+
+function bubbleRadius(contractMln) {
+  // contract_value уже в млн ₽; r — пиксели Chart.js. Раньше *0.55 давал огромные круги.
+  return Math.max(4, Math.min(14, 3 + Math.sqrt(Math.max(contractMln, 0)) * 0.28));
+}
+
+function renderQuadChart(rows) {
+  const pts = rows.filter(r => r.quad && r.avg_sg != null && r.avg_pct != null);
+  const visible = quadState.active ? pts.filter(r => r.quad === quadState.active) : pts;
+  const datasets = Object.keys(QUAD_META).map(k => {
+    const m = QUAD_META[k];
+    const data = visible.filter(r => r.quad === k).map(r => ({
+      x: r.avg_sg, y: r.avg_pct,
+      r: bubbleRadius(r.contract),
+      contractor: r.contractor, contract: r.contract, gap: r.gap, n: r.n,
+    }));
+    return {
+      label: m.label, data,
+      backgroundColor: m.color + '99', borderColor: m.color, borderWidth: 1,
+    };
+  });
+  const cfg = {
+    type: 'bubble',
+    data: { datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } },
+        datalabels: { display: false },
+        tooltip: {
+          callbacks: {
+            label(ctx) {
+              const d = ctx.raw;
+              return [
+                d.contractor,
+                `СГ ${d.x}% · оплата ${d.y}% · разрыв ${(d.gap>0?'+':'')+d.gap} п.п.`,
+                `объектов ${d.n} · сумма цен контрактов ${Math.round(d.contract).toLocaleString('ru-RU')} млн ₽`,
+              ];
+            },
+          },
+        },
+      },
+      scales: {
+        x: { min: 0, max: 100, title: { display: true, text: 'Стройготовность, %', font: { size: 12 } } },
+        y: { min: 0, max: 100, title: { display: true, text: 'Оплата, %', font: { size: 12 } } },
+      },
+      onClick(evt, elems, chart) {
+        if (!elems.length) return;
+        const el = elems[0];
+        const d = chart.data.datasets[el.datasetIndex].data[el.index];
+        if (!d || !d.contractor) return;
+        activeContractor = activeContractor === d.contractor ? null : d.contractor;
+        renderRollup();
+        renderObjTbl();
+        renderMatrix();
+      },
+    },
+    plugins: [quadCrossPlugin],
+  };
+  if (chartQuad) chartQuad.destroy();
+  chartQuad = new Chart(document.getElementById('cQuad'), cfg);
+}
+
+function renderRollup() {
+  const rows = buildContractorRows();
+  renderQuadCards(rows);
+  renderQuadChart(rows);
+  const filtered = quadState.active ? rows.filter(r => r.quad === quadState.active) : rows;
   const totalCredit = rows.reduce((s,c) => s + Math.max(0, c.credit), 0);
-  document.getElementById('contrRollup').innerHTML = rows.map(c => {
+  document.getElementById('contrRollup').innerHTML = filtered.map(c => {
     const remain = Math.max(0, c.plan2026 - c.osv2026);
     const creditTxt = c.credit > 0 ? Math.round(c.credit).toLocaleString('ru-RU') : '—';
     const shareTxt = totalCredit > 0 && c.credit > 0
       ? (Math.round(c.credit / totalCredit * 1000) / 10).toLocaleString('ru-RU') + '%'
       : '—';
+    const qm = c.quad ? QUAD_META[c.quad] : null;
+    const quadCell = qm
+      ? `<span class="pill" style="background:${qm.color}22;color:${qm.color}" title="${qm.desc}">${qm.label}</span>`
+      : '—';
     return `<tr class="clickable${activeContractor===c.contractor?' row-active':''}" data-c="${c.contractor}">` +
-      `<td>${c.contractor}</td><td class="r">${c.n}</td><td class="r">${Math.round(c.contract).toLocaleString('ru-RU')}</td>` +
+      `<td>${c.contractor}</td><td>${quadCell}</td><td class="r">${c.n}</td><td class="r">${Math.round(c.contract).toLocaleString('ru-RU')}</td>` +
       `<td class="r">${Math.round(c.plan2026).toLocaleString('ru-RU')}</td>` +
       `<td class="r">${Math.round(c.osv2026).toLocaleString('ru-RU')}</td>` +
       `<td class="r">${Math.round(remain).toLocaleString('ru-RU')}</td>` +
@@ -1561,6 +1989,22 @@ function renderRollup() {
   });
   renderContrDetail();
 }
+
+document.getElementById('qGotov').onchange = document.getElementById('qGotov').oninput = e => {
+  const v = parseFloat(e.target.value);
+  if (!Number.isNaN(v)) { quadState.qGotov = Math.max(0, Math.min(100, v)); renderRollup(); }
+};
+document.getElementById('qPctpay').onchange = document.getElementById('qPctpay').oninput = e => {
+  const v = parseFloat(e.target.value);
+  if (!Number.isNaN(v)) { quadState.qPctpay = Math.max(0, Math.min(100, v)); renderRollup(); }
+};
+document.getElementById('qReset').onclick = () => {
+  quadState.active = null;
+  quadState.qGotov = 50; quadState.qPctpay = 50;
+  document.getElementById('qGotov').value = 50;
+  document.getElementById('qPctpay').value = 50;
+  renderRollup();
+};
 
 function renderContrDetail() {
   const box = document.getElementById('contrDetail');
@@ -1606,27 +2050,52 @@ const matrixZonesPlugin = {
   beforeDatasetsDraw(chart) {
     const { ctx, scales: { x, y } } = chart;
     if (!x || !y) return;
+    // Оси матрицы: X = оплата %, Y = СГ %. Коридор — |СГ − оплата| ≤ 10.
     const x0 = x.getPixelForValue(0), x1 = x.getPixelForValue(100);
     const y0 = y.getPixelForValue(0), y1 = y.getPixelForValue(100);
+    const band = 10;
     ctx.save();
-    // выше диагонали: СГ > оплаты
+    // зоны вне коридора
     ctx.beginPath();
     ctx.moveTo(x0, y0); ctx.lineTo(x0, y1); ctx.lineTo(x1, y1); ctx.closePath();
-    ctx.fillStyle = 'rgba(27,138,156,.09)';
+    ctx.fillStyle = 'rgba(27,138,156,.10)';
     ctx.fill();
-    // ниже диагонали: оплата > СГ
     ctx.beginPath();
     ctx.moveTo(x0, y0); ctx.lineTo(x1, y0); ctx.lineTo(x1, y1); ctx.closePath();
-    ctx.fillStyle = 'rgba(107,91,149,.07)';
+    ctx.fillStyle = 'rgba(107,91,149,.08)';
     ctx.fill();
-    // подписи зон
-    ctx.font = "600 11px 'Golos Text', Manrope, system-ui, sans-serif";
-    ctx.fillStyle = 'rgba(18,104,128,.5)';
+    // коридор ±10 п.п. вдоль диагонали (заметная полоса)
+    ctx.beginPath();
+    for (let pay = 0; pay <= 100; pay++) {
+      const sgHi = Math.min(100, pay + band);
+      const px = x.getPixelForValue(pay), py = y.getPixelForValue(sgHi);
+      if (pay === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    for (let pay = 100; pay >= 0; pay--) {
+      const sgLo = Math.max(0, pay - band);
+      ctx.lineTo(x.getPixelForValue(pay), y.getPixelForValue(sgLo));
+    }
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(47,158,111,.22)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(47,158,111,.55)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath();
+    ctx.moveTo(x.getPixelForValue(0), y.getPixelForValue(0));
+    ctx.lineTo(x.getPixelForValue(100), y.getPixelForValue(100));
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.font = "600 12px 'Golos Text', Manrope, system-ui, sans-serif";
+    ctx.fillStyle = 'rgba(18,104,128,.55)';
     ctx.textAlign = 'left';
-    ctx.fillText('кредитует', x0 + 10, y1 + 18);
-    ctx.fillStyle = 'rgba(107,91,149,.5)';
+    ctx.fillText('кредитует', x0 + 12, y1 + 20);
+    ctx.fillStyle = 'rgba(107,91,149,.55)';
     ctx.textAlign = 'right';
-    ctx.fillText('избыток оплаты', x1 - 10, y0 - 10);
+    ctx.fillText('избыток оплаты', x1 - 12, y0 - 12);
+    ctx.fillStyle = 'rgba(47,158,111,.75)';
+    ctx.textAlign = 'center';
+    ctx.fillText('коридор ±10 п.п.', x.getPixelForValue(72), y.getPixelForValue(72) - 10);
     ctx.restore();
   },
 };
@@ -1844,17 +2313,40 @@ function drawTraj(uin) {
   const rows = DATA.traj[uin]||[], m = DATA.per.find(p=>p.uin===uin);
   const k = DATA.kt_dates[uin]||{};
   document.getElementById('tagR').textContent = m&&m.r!=null ? 'корр. '+m.r.toFixed(2) : '';
-  document.getElementById('metaSchool').textContent = m ? `${m.name}: ${m.sg}% факт, ${m.plan??'—'}% план, ${m.pct??'—'}% выпл.` : '';
-  document.getElementById('ktLine').textContent = `Экспертиза ${k.exp_sl||k.exp_plan||'—'}, СМР с ${k.smr_start||'—'}, контракт ${k.ctr_fact||'—'}` + (m&&m.flags?.length ? '. '+m.flags.join(', ') : '');
+  document.getElementById('metaSchool').textContent = m ? `${m.name}: ${m.sg}% факт · ${m.plan??'—'}% план · ${m.pct??'—'}% опл.` : '';
+
+  const schedEl = document.getElementById('schedLine');
+  schedEl.textContent = k.schedule || '';
+  const bad = /СГ [−-]\d|открытие [−-]/.test(k.schedule || '');
+  schedEl.style.color = bad ? '#A32E2E' : '#1E8449';
+
+  // Короткие даты под графиком — не простыня флагов.
+  const bits = [];
+  if (k.exp_sl || k.exp_fact || k.exp_plan) bits.push(`эксп. ${k.exp_sl||k.exp_fact||k.exp_plan}`);
+  if (k.open_fact) bits.push(`открыто ${k.open_fact}${k.open_source && k.open_source!=='открытие' ? ' ('+k.open_source+')' : ''}`);
+  else if (k.open_plan) bits.push(`открытие план ${k.open_plan}`);
+  document.getElementById('ktLine').textContent = bits.join(' · ') || '';
+
+  const flags = (m && m.flags) || [];
+  document.getElementById('flagLine').innerHTML = flags.slice(0, 4)
+    .map(f => `<span class="flag">${f}</span>`).join('');
+
   const annotations = {};
-  if (k.exp_marker) {
-    annotations.exp = { type:'line', xMin:k.exp_marker, xMax:k.exp_marker, borderColor:'#2E7CC4', borderWidth:2, borderDash:[3,3],
-      label:{ display:true, content:'Экспертиза', position:'start', backgroundColor:'#2E7CC4', font:{size:10} } };
-  }
+  (k.marks || []).forEach(mk => {
+    annotations[mk.id] = {
+      type: 'line',
+      xMin: mk.x, xMax: mk.x,
+      borderColor: mk.color,
+      borderWidth: mk.id === 'open' ? 2.5 : 1.5,
+      borderDash: mk.kind === 'plan' ? [5, 4] : undefined,
+      // подписи на графике — шум; даты ниже
+      label: { display: false },
+    };
+  });
   const cfg = { type:'line', data:{ labels:rows.map(r=>r.d), datasets:[
-    { label:'Факт', data:rows.map(r=>r.sg), borderColor:blue, tension:.25, pointRadius:2 },
-    { label:'План', data:rows.map(r=>r.plan), borderColor:blue, borderDash:[5,4], tension:.25, pointRadius:0 },
-    { label:'Основные платежи', data:rows.map(r=>r.regPct), borderColor:green, tension:.25, pointRadius:2 },
+    { label:'Факт СГ', data:rows.map(r=>r.sg), borderColor:blue, tension:.25, pointRadius:2 },
+    { label:'План СГ', data:rows.map(r=>r.plan), borderColor:blue, borderDash:[5,4], tension:.25, pointRadius:0 },
+    { label:'Оплата', data:rows.map(r=>r.regPct), borderColor:green, tension:.25, pointRadius:2 },
     { label:'Аванс', data:rows.map(r=>r.advPct), borderColor:green, borderDash:[2,2], tension:.25, pointRadius:0 }
   ]}, options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}, datalabels:{display:false}, annotation:{annotations}}, scales:{ y:{min:0,max:100} } } };
   if(chartTraj) chartTraj.destroy(); chartTraj = new Chart(document.getElementById('cTraj'), cfg);
@@ -1888,9 +2380,255 @@ function switchTab(tab) {
   document.querySelectorAll('.tabbtn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   document.querySelectorAll('.tabpanel').forEach(p => p.hidden = p.dataset.tab !== tab);
   if (tab === 'objects' && chartMatrix) chartMatrix.resize();
+  if (tab === 'contractors' && chartQuad) chartQuad.resize();
+  if (tab === 'minstroy') { if (chartMsMatrix) chartMsMatrix.resize(); if (chartMsTraj) chartMsTraj.resize(); }
   if (tab === 'one' && chartTraj) chartTraj.resize();
 }
 document.querySelectorAll('.tabbtn').forEach(btn => btn.onclick = () => switchTab(btn.dataset.tab));
+
+/* ---- Минстрой: динамика из срезов Simple List ---- */
+const MS = DATA.minstroy;
+let msFilter = 'all', msStatus = 'all', msUin = null, msFocusUin = null, chartMsMatrix = null, chartMsTraj = null;
+
+function msPass(o) {
+  if (msFilter !== 'all' && o.bucket !== msFilter) return false;
+  if (msStatus === 'credit') return o.money_status === 'credit';
+  if (msStatus === 'over') return o.money_status === 'over';
+  if (msStatus === 'balanced') return o.money_status === 'balanced';
+  if (msStatus === 'sg') return (o.sg || 0) > 0;
+  if (msStatus === 'exp') return !!o.exp_done || o.exp_agreed_mln != null;
+  if (msStatus === 'noexp') return !o.exp_done && o.exp_agreed_mln == null;
+  if (msStatus === 'overrun') return (o.exp_overrun || 0) > 0;
+  if (msStatus === 'cheap') return (o.exp_overrun || 0) < 0;
+  return true;
+}
+
+function msFiltered() {
+  return (MS && MS.objects) ? MS.objects.filter(msPass) : [];
+}
+
+function msSelectObject(uin, { focus = false } = {}) {
+  if (!uin) return;
+  msUin = uin;
+  if (focus) msFocusUin = uin;
+  const sel = document.getElementById('selMs');
+  if (sel) sel.value = msUin;
+  drawMsTraj(msUin);
+  renderMsTbl();
+}
+
+function renderMsMatrix() {
+  if (!MS) return;
+  const rows = msFiltered().filter(o => o.sg != null && o.pct != null);
+  const byStatus = { credit:[], over:[], balanced:[], unknown:[] };
+  rows.forEach(o => (byStatus[o.money_status] || byStatus.unknown).push(o));
+  const datasets = ['credit','balanced','over','unknown'].map(st => {
+    const meta = MATRIX_STATUS[st] || MATRIX_STATUS.unknown;
+    return {
+      label: meta.label,
+      data: byStatus[st].map(o => {
+        const size = o.limit || o.contract_value || 0;
+        return {
+          x: o.pct, y: o.sg, r: bubbleRadius(size),
+          uin: o.uin, name: o.name,
+          contract: o.contract_value, limit: o.limit,
+        };
+      }),
+      backgroundColor: meta.fill,
+      borderColor: meta.color,
+      borderWidth: 1,
+    };
+  });
+  const cfg = {
+    type: 'bubble',
+    data: { datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } },
+        datalabels: { display: false },
+        tooltip: { callbacks: { label(ctx) {
+          const d = ctx.raw;
+          return `${d.name}: СГ ${d.y}% · оплата ${d.x}% · лимит ${d.limit ?? '—'} · контракт ${d.contract ?? '—'} млн`;
+        }}},
+      },
+      scales: {
+        x: { min:0, max:100, title:{ display:true, text:'Оплата (от лимита), %', font:{ size:13, weight:'600' } } },
+        y: { min:0, max:100, title:{ display:true, text:'Стройготовность (факт), %', font:{ size:13, weight:'600' } } },
+      },
+      onClick(evt, els, chart) {
+        if (!els.length) {
+          if (msFocusUin) { msFocusUin = null; renderMsTbl(); }
+          return;
+        }
+        const d = chart.data.datasets[els[0].datasetIndex].data[els[0].index];
+        if (!d || !d.uin) return;
+        msSelectObject(d.uin, { focus: true });
+      },
+    },
+    plugins: [matrixZonesPlugin],
+  };
+  if (chartMsMatrix) chartMsMatrix.destroy();
+  chartMsMatrix = new Chart(document.getElementById('cMsMatrix'), cfg);
+}
+
+function parseMsDate(s) {
+  if (!s) return null;
+  const m = String(s).match(/^(\d{1,2})\.(\d{1,2})\.(\d{2,4})$/);
+  if (!m) return null;
+  let y = +m[3]; if (y < 100) y += 2000;
+  return new Date(y, +m[2]-1, +m[1]).getTime();
+}
+
+function drawMsTraj(uin) {
+  if (!MS) return;
+  const o = MS.objects.find(x => x.uin === uin);
+  const el = document.getElementById('msSelMeta');
+  if (!o) { el.textContent = ''; return; }
+  const expBits = [];
+  if (o.exp_agreed_mln != null) {
+    const dlt = o.exp_delta_mln != null
+      ? ` (${o.exp_delta_mln>0?'+':''}${o.exp_delta_mln} млн` + (o.exp_overrun!=null ? `, ${o.exp_overrun>0?'+':''}${o.exp_overrun}%` : '') + ')'
+      : '';
+    expBits.push(`смета после эксп. ${o.exp_agreed_mln} млн${dlt}`);
+  } else if (o.exp_plan_mln != null) {
+    expBits.push(`смета план ${o.exp_plan_mln} млн`);
+  }
+  if (o.exp_done) expBits.push(`эксп. ${o.exp_done}`);
+  else if (o.exp_in) expBits.push(`заход на эксп. ${o.exp_in}`);
+  el.textContent = `${o.full || o.name}: СГ ${o.sg ?? '—'}% · оплата ${o.pct ?? '—'}% · ΔСГ ${o.sg_delta ?? '—'} п.п.` +
+    (expBits.length ? ' · ' + expBits.join(' · ') : '') +
+    ` · ${o.n_pts} срезов`;
+  const traj = o.traj || [];
+  const labels = traj.map(p => p.d);
+  const annotations = {};
+  if (o.exp_done && labels.length) {
+    const exp = parseMsDate(o.exp_done);
+    let bestIdx = -1, bestDist = Infinity;
+    labels.forEach((lab, i) => {
+      const dt = parseMsDate(lab);
+      if (!dt || !exp) return;
+      const dist = Math.abs(dt - exp);
+      if (dist < bestDist) { bestDist = dist; bestIdx = i; }
+    });
+    if (bestIdx >= 0) {
+      annotations.exp = {
+        type: 'line', xMin: bestIdx, xMax: bestIdx,
+        borderColor: blue, borderWidth: 2,
+        label: { display: false },
+      };
+    }
+  }
+  const cfg = {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label:'СГ факт', data: traj.map(p => p.sg), borderColor: blue, tension:.2, pointRadius:2, spanGaps:true },
+        { label:'Оплата %', data: traj.map(p => p.pct), borderColor: green, tension:.2, pointRadius:2, spanGaps:true },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend:{ position:'bottom' },
+        datalabels:{ display:false },
+        annotation: { annotations },
+      },
+      scales: { y:{ min:0, max:100 } },
+    },
+  };
+  if (chartMsTraj) chartMsTraj.destroy();
+  chartMsTraj = new Chart(document.getElementById('cMsTraj'), cfg);
+}
+
+function renderMsTbl() {
+  if (!MS) return;
+  let rows = msFiltered().slice().sort((a,b) => (b.sg||0)-(a.sg||0));
+  if (msFocusUin) {
+    const focused = rows.filter(o => o.uin === msFocusUin);
+    // если объект вне текущего фильтра вида работ — всё равно показать его
+    rows = focused.length ? focused : MS.objects.filter(o => o.uin === msFocusUin);
+  }
+  const wrap = document.getElementById('msTbl').closest('.tbl-wrap');
+  document.getElementById('msTbl').innerHTML = rows.map(o => {
+    const active = o.uin === msUin ? ' row-active' : '';
+    const ovCls = o.exp_overrun > 0 ? 'pos' : (o.exp_overrun < 0 ? 'neg' : '');
+    const deltaCell = o.exp_delta_mln != null
+      ? `<div class="cell-stack end"><span class="amt ${ovCls}">${o.exp_delta_mln>0?'+':''}${o.exp_delta_mln}</span>` +
+        (o.exp_overrun!=null ? `<span class="pct ${ovCls}">${o.exp_overrun>0?'+':''}${o.exp_overrun}%</span>` : '') +
+        `</div>`
+      : '—';
+    const expCell = o.exp_done
+      ? `<span title="заход ${o.exp_in||'—'} · старт ${o.exp_start||'—'}">${o.exp_done}</span>`
+      : (o.exp_in ? `<span class="pill warn" title="заход ${o.exp_in}">в эксп.</span>` : (o.entered_exp ? '<span class="pill warn">заявка</span>' : '—'));
+    return `<tr class="clickable${active}" data-uin="${o.uin}">` +
+      `<td title="${o.full||''}">${o.name}</td>` +
+      `<td class="clip" title="${o.work||''}">${o.work||'—'}</td>` +
+      `<td class="clip">${o.contractor||'—'}</td>` +
+      `<td class="r">${o.limit??'—'}</td>` +
+      `<td class="r">${o.contract_value??'—'}</td>` +
+      `<td class="r">${o.sg??'—'}</td><td class="r">${o.pct??'—'}</td>` +
+      `<td class="r">${o.exp_agreed_mln??'—'}</td>` +
+      `<td class="r">${deltaCell}</td>` +
+      `<td>${expCell}</td>` +
+      `<td class="r">${o.sg_delta!=null?(o.sg_delta>0?'+':'')+o.sg_delta:'—'}</td>` +
+      `<td><span class="pill ${STATUS_PILL[o.money_status]||''}">${STATUS_SHORT[o.money_status]||'—'}</span></td></tr>`;
+  }).join('') || '<tr><td colspan="12" class="note">Нет объектов</td></tr>';
+  if (wrap) wrap.scrollTop = 0;
+  document.querySelectorAll('#msTbl tr.clickable').forEach(tr => {
+    tr.onclick = () => msSelectObject(tr.dataset.uin, { focus: true });
+  });
+}
+
+function initMinstroy() {
+  if (!MS || !MS.objects) {
+    const btn = document.querySelector('.tabbtn[data-tab="minstroy"]');
+    if (btn) btn.hidden = true;
+    return;
+  }
+  const m = MS.meta || {};
+  document.getElementById('msNote').textContent =
+    `Срез ${m.as_of || '—'} · ${m.n || MS.objects.length} объектов ГРБС «Минстрой» без сноса · ${(m.dates||[]).length} выгрузок Simple List. ${m.note || ''}`;
+  document.getElementById('msN').textContent = (m.n || MS.objects.length).toLocaleString('ru-RU');
+  document.getElementById('msMedSg').textContent = m.median_sg != null ? m.median_sg : '—';
+  document.getElementById('msMedPct').textContent = m.median_pct != null ? m.median_pct : '—';
+  document.getElementById('msCredit').textContent = m.n_credit != null ? m.n_credit : '—';
+
+  const sel = document.getElementById('selMs');
+  sel.innerHTML = '';
+  MS.objects.forEach(o => {
+    const opt = document.createElement('option');
+    opt.value = o.uin; opt.textContent = o.name;
+    sel.appendChild(opt);
+  });
+  msUin = MS.objects[0].uin;
+  sel.value = msUin;
+  sel.onchange = e => msSelectObject(e.target.value, { focus: true });
+
+  document.querySelectorAll('#msFilterBar .fbtn').forEach(btn => {
+    btn.onclick = () => {
+      document.querySelectorAll('#msFilterBar .fbtn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      msFilter = btn.dataset.ms;
+      msFocusUin = null;
+      renderMsMatrix(); renderMsTbl();
+    };
+  });
+  document.querySelectorAll('#msStatusBar .fbtn').forEach(btn => {
+    btn.onclick = () => {
+      document.querySelectorAll('#msStatusBar .fbtn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      msStatus = btn.dataset.msst;
+      msFocusUin = null;
+      renderMsMatrix(); renderMsTbl();
+    };
+  });
+  renderMsMatrix();
+  drawMsTraj(msUin);
+  renderMsTbl();
+}
+initMinstroy();
 </script>
 </body>
 </html>
@@ -1992,7 +2730,16 @@ initMethod();
 def main():
     payload = load_data()
     data_json = json.dumps(payload, ensure_ascii=False)
-    sub = "48 школ, обновлено 14.09.2026"
+    n = payload["stats"].get("n_objects") or payload["stats"]["n"]
+    # Дата среза — макс. дата в рядах СГ/платежей; fallback на сегодня.
+    stamp = datetime.now().strftime("%d.%m.%Y")
+    sub = f"{n} объектов, обновлено {stamp}"
+
+    dash_payload = dict(payload)
+    minstroy = load_minstroy()
+    if minstroy:
+        dash_payload["minstroy"] = minstroy
+    dash_json = json.dumps(dash_payload, ensure_ascii=False)
 
     method_html = (
         HEAD_STYLE.replace("__TITLE__", "СГ и выплаты — методика")
@@ -2010,7 +2757,7 @@ def main():
         .replace("__WRAP__", "1600")
         .replace("__CKS_LOGO__", CKS_LOGO_B64)
         + DASHBOARD_BODY
-        + DASHBOARD_SCRIPT.replace("__DATA__", data_json)
+        + DASHBOARD_SCRIPT.replace("__DATA__", dash_json)
     ).replace("__ICON_WARN__", ICON_WARN)
 
     out = ROOT / "index.html"
@@ -2018,7 +2765,12 @@ def main():
     (ROOT / "sg-pay-analysis.html").write_text(method_html, encoding="utf-8")
     dash_out = ROOT / "dashboard.html"
     dash_out.write_text(dashboard_html, encoding="utf-8")
-    print(f"OK: {out} ({out.stat().st_size} bytes) + {dash_out} ({dash_out.stat().st_size} bytes), {payload['stats']['n']} schools")
+    ms_n = (minstroy or {}).get("meta", {}).get("n")
+    print(
+        f"OK: {out} ({out.stat().st_size} bytes) + {dash_out} ({dash_out.stat().st_size} bytes), "
+        f"{payload['stats']['n']} schools"
+        + (f", minstroy={ms_n}" if ms_n else "")
+    )
 
 
 if __name__ == "__main__":
