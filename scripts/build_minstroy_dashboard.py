@@ -136,18 +136,30 @@ EXON_HEAD = r"""<!DOCTYPE html>
   .kpi.money { text-align: left }
   .kpi.money .pair { display: flex; justify-content: space-between; gap: .75rem; margin: .35rem 0 0; font-size: .8125rem; color: hsl(var(--muted-foreground)) }
   .kpi.money .pair b { color: hsl(var(--foreground)); font-variant-numeric: tabular-nums }
-  /* Фильтры как Exon Filters: select + search */
+  /* Фильтры: multi-select + поиск */
   .filters { display: grid; grid-template-columns: 1fr; gap: .75rem }
-  @media (min-width: 768px) { .filters { grid-template-columns: 1fr 1fr 1fr 1fr 1.4fr } }
+  @media (min-width: 900px) { .filters { grid-template-columns: 1fr 1.4fr 1fr 1fr 1.2fr } }
   .field {
-    display: flex; align-items: center; gap: .5rem;
+    display: flex; flex-direction: column; gap: .25rem;
     background: #fff; border: 1px solid hsl(var(--border)); border-radius: .5rem;
-    padding: 0 .75rem; height: 40px;
+    padding: .4rem .65rem .5rem; min-height: 40px;
+  }
+  .field > span {
+    font-size: .65rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+    color: hsl(var(--muted-foreground));
+  }
+  .field.select-row {
+    flex-direction: row; align-items: center; gap: .5rem; padding: 0 .75rem; height: 40px; min-height: 40px;
   }
   .field select, .field input {
     flex: 1; min-width: 0; border: none; outline: none; background: transparent;
-    font: inherit; color: hsl(var(--foreground)); height: 100%;
+    font: inherit; color: hsl(var(--foreground));
   }
+  .field select[multiple] {
+    height: 88px; width: 100%; padding: 0;
+  }
+  .field select[multiple] option { padding: .15rem .25rem }
+  .field input { height: 100% }
   .field svg { width: 16px; height: 16px; color: hsl(var(--muted-foreground)); flex-shrink: 0 }
   /* Card panels */
   .card {
@@ -309,26 +321,25 @@ PAGE_BODY = r"""
   <div class="tabpanel stack" data-tab="objects" hidden>
   <div class="filters">
     <label class="field">
-      <select id="fltYear">
-        <option value="all">Все годы открытия</option>
-      </select>
+      <span>Год открытия · ⌘/Ctrl</span>
+      <select id="fltYear" multiple size="4"></select>
     </label>
     <label class="field">
-      <select id="fltCustomer">
-        <option value="all">Все заказчики</option>
-      </select>
+      <span>Заказчик · ⌘/Ctrl</span>
+      <select id="fltCustomer" multiple size="4"></select>
     </label>
     <label class="field">
-      <select id="fltWork">
-        <option value="all">Все виды работ</option>
+      <span>Вид работ · ⌘/Ctrl</span>
+      <select id="fltWork" multiple size="4">
         <option value="капремонт">Капремонт</option>
         <option value="строительство">Строительство</option>
         <option value="реконструкция">Реконструкция</option>
+        <option value="прочее">Прочее</option>
       </select>
     </label>
     <label class="field">
-      <select id="fltStatus">
-        <option value="all">Все статусы</option>
+      <span>Статус · ⌘/Ctrl</span>
+      <select id="fltStatus" multiple size="4">
         <option value="credit">Кредитует</option>
         <option value="over">Избыток оплаты</option>
         <option value="balanced">Баланс</option>
@@ -337,7 +348,7 @@ PAGE_BODY = r"""
         <option value="noexp">Без экспертизы</option>
       </select>
     </label>
-    <label class="field">
+    <label class="field select-row">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
       <input id="fltSearch" type="search" placeholder="Поиск..." autocomplete="off">
     </label>
@@ -427,19 +438,27 @@ function bubbleRadius(contractMln) {
 }
 
 const MZ = DATA;
-let mzFilter = 'all', mzStatus = 'all', mzYear = 'all', mzCustomer = 'all', mzSearch = '', mzUin = null, mzFocusUin = null;
+let mzYears = ['2026'], mzCustomers = [], mzWorks = [], mzStatuses = [];
+let mzSearch = '', mzUin = null, mzFocusUin = null;
 let chartMzMatrix = null, chartMzTraj = null, chartQuad = null;
 
+function selectedValues(sel) {
+  return [...sel.selectedOptions].map(o => o.value);
+}
+function statusMatch(o, st) {
+  if (st === 'credit') return o.money_status === 'credit';
+  if (st === 'over') return o.money_status === 'over';
+  if (st === 'balanced') return o.money_status === 'balanced';
+  if (st === 'sg') return o.sg > 0;
+  if (st === 'exp') return !!(o.exp_done || o.exp_agreed_mln != null);
+  if (st === 'noexp') return !(o.exp_done || o.exp_agreed_mln != null);
+  return true;
+}
 function mzPass(o) {
-  if (mzFilter !== 'all' && o.bucket !== mzFilter) return false;
-  if (mzYear !== 'all' && String(o.open_year || '') !== mzYear) return false;
-  if (mzCustomer !== 'all' && (o.customer || '') !== mzCustomer) return false;
-  if (mzStatus === 'credit' && o.money_status !== 'credit') return false;
-  if (mzStatus === 'over' && o.money_status !== 'over') return false;
-  if (mzStatus === 'balanced' && o.money_status !== 'balanced') return false;
-  if (mzStatus === 'sg' && !(o.sg > 0)) return false;
-  if (mzStatus === 'exp' && !(o.exp_done || o.exp_agreed_mln != null)) return false;
-  if (mzStatus === 'noexp' && (o.exp_done || o.exp_agreed_mln != null)) return false;
+  if (mzYears.length && !mzYears.includes(String(o.open_year || ''))) return false;
+  if (mzCustomers.length && !mzCustomers.includes(o.customer || '')) return false;
+  if (mzWorks.length && !mzWorks.includes(o.bucket)) return false;
+  if (mzStatuses.length && !mzStatuses.some(st => statusMatch(o, st))) return false;
   if (mzSearch) {
     const q = mzSearch.toLowerCase();
     const blob = [o.name, o.full, o.contractor, o.customer, o.ownership, o.work, o.uin, o.open_year]
@@ -927,6 +946,7 @@ function renderMzTbl() {
   years.forEach(y => {
     const opt = document.createElement('option');
     opt.value = y; opt.textContent = y;
+    if (y === '2026') opt.selected = true;
     yearSel.appendChild(opt);
   });
   const custSel = document.getElementById('fltCustomer');
@@ -939,18 +959,28 @@ function renderMzTbl() {
     custSel.appendChild(opt);
   });
 
-  const refresh = () => { mzFocusUin = null; renderMzMatrix(); renderMzTbl(); };
-  document.getElementById('fltWork').onchange = e => { mzFilter = e.target.value; refresh(); };
-  document.getElementById('fltStatus').onchange = e => { mzStatus = e.target.value; refresh(); };
-  yearSel.onchange = e => { mzYear = e.target.value; refresh(); };
-  custSel.onchange = e => { mzCustomer = e.target.value; refresh(); };
+  const workSel = document.getElementById('fltWork');
+  const statusSel = document.getElementById('fltStatus');
+  const refresh = () => {
+    mzYears = selectedValues(yearSel);
+    mzCustomers = selectedValues(custSel);
+    mzWorks = selectedValues(workSel);
+    mzStatuses = selectedValues(statusSel);
+    mzFocusUin = null;
+    renderMzMatrix();
+    renderMzTbl();
+  };
+  yearSel.onchange = refresh;
+  custSel.onchange = refresh;
+  workSel.onchange = refresh;
+  statusSel.onchange = refresh;
   let searchTimer = null;
   document.getElementById('fltSearch').oninput = e => {
     clearTimeout(searchTimer);
     const v = e.target.value.trim();
     searchTimer = setTimeout(() => { mzSearch = v; refresh(); }, 200);
   };
-  renderMzTbl();
+  refresh();
 })();
 </script>
 </body>

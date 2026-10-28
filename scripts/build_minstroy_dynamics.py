@@ -102,7 +102,7 @@ def short_contractor(c):
     return (c[:40] + "…") if len(c) > 40 else c or None
 
 
-def short_customer(c, nmax=52):
+def short_customer(c, nmax=90):
     if not c:
         return None
     c = str(c).strip()
@@ -115,8 +115,18 @@ def short_customer(c, nmax=52):
     c = re.sub(r"^МУНИЦИПАЛЬНОЕ КАЗЕННОЕ УЧРЕЖДЕНИЕ\s*", "МКУ ", c, flags=re.I)
     c = re.sub(r"^АДМИНИСТРАЦИЯ\s+", "Адм. ", c, flags=re.I)
     c = re.sub(r"^УПРАВЛЕНИЕ\s+", "Упр. ", c, flags=re.I)
-    c = c.strip(' «»"')
-    return (c[: nmax - 1] + "…") if len(c) > nmax else c or None
+    c = c.strip(' «»"').rstrip("…").rstrip(".")
+    # канон: ДЗКС без хвоста в кавычках / «...»
+    c = re.sub(
+        r'^(ГКУ МО )\s*[«"]?ДИРЕКЦИЯ ЗАКАЗЧИКА КАПИТАЛЬНОГО СТРОИТЕЛЬСТВА[»"].*$',
+        r"\1ДИРЕКЦИЯ ЗАКАЗЧИКА КАПИТАЛЬНОГО СТРОИТЕЛЬСТВА",
+        c,
+        flags=re.I,
+    )
+    if len(c) > nmax:
+        cut = c[:nmax].rsplit(" ", 1)[0]
+        c = cut if len(cut) >= nmax // 2 else c[:nmax]
+    return c or None
 
 
 def year_str(v):
