@@ -102,6 +102,34 @@ def short_contractor(c):
     return (c[:40] + "…") if len(c) > 40 else c or None
 
 
+def short_customer(c, nmax=52):
+    if not c:
+        return None
+    c = str(c).strip()
+    c = re.sub(
+        r'^ГОСУДАРСТВЕННОЕ КАЗЕННОЕ УЧРЕЖДЕНИЕ МОСКОВСКОЙ ОБЛАСТИ\s*[«"]?',
+        "ГКУ МО ",
+        c,
+        flags=re.I,
+    )
+    c = re.sub(r"^МУНИЦИПАЛЬНОЕ КАЗЕННОЕ УЧРЕЖДЕНИЕ\s*", "МКУ ", c, flags=re.I)
+    c = re.sub(r"^АДМИНИСТРАЦИЯ\s+", "Адм. ", c, flags=re.I)
+    c = re.sub(r"^УПРАВЛЕНИЕ\s+", "Упр. ", c, flags=re.I)
+    c = c.strip(' «»"')
+    return (c[: nmax - 1] + "…") if len(c) > nmax else c or None
+
+
+def year_str(v):
+    if v is None or v == "":
+        return None
+    if isinstance(v, (int, float)):
+        y = int(v)
+        return str(y) if 1990 <= y <= 2100 else None
+    s = str(v).strip()
+    m = re.search(r"(20\d{2})", s)
+    return m.group(1) if m else None
+
+
 def work_bucket(work: str) -> str:
     w = (work or "").lower()
     if "снос" in w:
@@ -181,22 +209,26 @@ def ksg_kind(proc: str):
     return None
 
 
-def load_ksg_marks(uins: set[str]):
-    """Окончание плана и факта: экспертиза, СМР, открытие."""
+def load_ksg_meta(uins: set[str]):
+    """Вехи КСГ (экспертиза/СМР/открытие) и заказчик по УИН."""
     path = next((p for p in KSG_CANDIDATES if p.exists()), None)
     if not path:
-        print("KSG marks: no file, skip")
-        return {}
-    print(f"KSG marks from {path.name} ...", flush=True)
+        print("KSG: no file, skip")
+        return {}, {}
+    print(f"KSG marks+customer from {path.name} ...", flush=True)
     wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
     ws = wb.active
     acc: dict[str, dict] = {}
+    customers: dict[str, str] = {}
     for row in ws.iter_rows(min_row=3, values_only=True):
         if not row:
             continue
         uin = uin_key(row[0])
         if uin not in uins:
             continue
+        cust = row[4] if len(row) > 4 else None
+        if cust and uin not in customers:
+            customers[uin] = short_customer(cust)
         kind = ksg_kind(str(row[6] or ""))
         if not kind:
             continue
@@ -208,7 +240,7 @@ def load_ksg_marks(uins: set[str]):
         if plan_end and (slot["plan"] is None or plan_end > slot["plan"]):
             slot["plan"] = plan_end
     wb.close()
-    out = {}
+    marks_out = {}
     for uin, kinds in acc.items():
         marks = {}
         for key in ("exp", "smr", "open"):
@@ -218,9 +250,9 @@ def load_ksg_marks(uins: set[str]):
             if plan or fact:
                 marks[key] = {"plan": plan, "fact": fact}
         if marks:
-            out[uin] = marks
-    print(f"  marks for {len(out)} UINs")
-    return out
+            marks_out[uin] = marks
+    print(f"  marks for {len(marks_out)} UINs, customers {len(customers)}")
+    return marks_out, customers
 
 
 def load_funding(path: Path, uins: set[str]):
@@ -329,6 +361,8 @@ def load_file(path: Path, d):
     i_exp_done = c("Дата получения заключения (завершения ) экспертизы")
     i_exp_code = c("Код заявления на прохождение экспертизы")
     i_egrz = c("Номер заключения экспертизы")
+    i_open_year = c("Год открытия")
+    i_ownership = c("Собственность")
     if i_uin is None or i_grbs is None:
         wb.close()
         return {}
@@ -363,6 +397,8 @@ def load_file(path: Path, d):
         exp_done = None
         entered_exp = False
         egrz = None
+        open_year = None
+        ownership = None
         # контракты по Р/Н (или anon), берём max nmck на rn
         contracts: dict = {}
         for row in rows:
@@ -400,6 +436,10 @@ def load_file(path: Path, d):
                 entered_exp = True
             if i_egrz is not None and row[i_egrz] and not egrz:
                 egrz = str(row[i_egrz]).strip()
+            if open_year is None and i_open_year is not None:
+                open_year = year_str(row[i_open_year])
+            if ownership is None and i_ownership is not None and row[i_ownership]:
+                ownership = str(row[i_ownership]).strip() or None
 
             paid = fnum(row[i_paid]) if i_paid is not None else None
             adv = fnum(row[i_adv]) if i_adv is not None else None
@@ -456,6 +496,8 @@ def load_file(path: Path, d):
             "exp_done": exp_done,
             "entered_exp": entered_exp,
             "egrz": egrz,
+            "open_year": open_year,
+            "ownership": ownership,
         }
     return best
 
@@ -497,7 +539,7 @@ def main():
         uin for uin, pts in series.items() if max(p["d"] for p in pts) == last_date
     }
     funding = load_funding(last_file, portfolio_uins)
-    ksg = load_ksg_marks(portfolio_uins)
+    ksg, customers = load_ksg_meta(portfolio_uins)
 
     objects = []
     for uin, pts in series.items():
@@ -515,6 +557,8 @@ def main():
         exp_done = last.get("exp_done")
         entered_exp = bool(last.get("entered_exp"))
         egrz = last.get("egrz")
+        open_year = last.get("open_year")
+        ownership = last.get("ownership")
         # протянуть nmck/лимит/экспертизу назад, если в ранних срезах пусто
         for p in pts:
             if (p.get("nmck") or 0) > 0:
@@ -535,6 +579,10 @@ def main():
                 entered_exp = True
             if p.get("egrz"):
                 egrz = p["egrz"]
+            if p.get("open_year"):
+                open_year = p["open_year"]
+            if p.get("ownership"):
+                ownership = p["ownership"]
         # база % оплаты и рублёвого разрыва — предельная (лимит), иначе НМЦК
         pay_base = limit if limit > 0 else nmck
         # стоимости экспертизы в Simple List — тыс. ₽
@@ -581,6 +629,9 @@ def main():
                 "work": last["work"] or "—",
                 "bucket": work_bucket(last["work"]),
                 "contractor": short_contractor(last["contractor"]),
+                "customer": customers.get(uin),
+                "ownership": ownership,
+                "open_year": open_year,
                 "status": last["status"],
                 "sg": sg,
                 "pct": pct,

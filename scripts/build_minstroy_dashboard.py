@@ -138,7 +138,7 @@ EXON_HEAD = r"""<!DOCTYPE html>
   .kpi.money .pair b { color: hsl(var(--foreground)); font-variant-numeric: tabular-nums }
   /* Фильтры как Exon Filters: select + search */
   .filters { display: grid; grid-template-columns: 1fr; gap: .75rem }
-  @media (min-width: 768px) { .filters { grid-template-columns: 1fr 1fr 1.4fr } }
+  @media (min-width: 768px) { .filters { grid-template-columns: 1fr 1fr 1fr 1fr 1.4fr } }
   .field {
     display: flex; align-items: center; gap: .5rem;
     background: #fff; border: 1px solid hsl(var(--border)); border-radius: .5rem;
@@ -272,6 +272,8 @@ PAGE_BODY = r"""
         <thead><tr>
           <th>Объект</th>
           <th>Вид работ</th>
+          <th class="r">Год откр.</th>
+          <th>Заказчик</th>
           <th class="r">Лимит, млн</th><th class="r">Контракт, млн</th>
           <th class="r">СГ, %</th><th class="r">Оплата, %</th>
           <th class="r" title="Согласованная смета после экспертизы">После экспертизы, млн</th>
@@ -306,6 +308,16 @@ PAGE_BODY = r"""
 
   <div class="tabpanel stack" data-tab="objects" hidden>
   <div class="filters">
+    <label class="field">
+      <select id="fltYear">
+        <option value="all">Все годы открытия</option>
+      </select>
+    </label>
+    <label class="field">
+      <select id="fltCustomer">
+        <option value="all">Все заказчики</option>
+      </select>
+    </label>
     <label class="field">
       <select id="fltWork">
         <option value="all">Все виды работ</option>
@@ -415,11 +427,13 @@ function bubbleRadius(contractMln) {
 }
 
 const MZ = DATA;
-let mzFilter = 'all', mzStatus = 'all', mzSearch = '', mzUin = null, mzFocusUin = null;
+let mzFilter = 'all', mzStatus = 'all', mzYear = 'all', mzCustomer = 'all', mzSearch = '', mzUin = null, mzFocusUin = null;
 let chartMzMatrix = null, chartMzTraj = null, chartQuad = null;
 
 function mzPass(o) {
   if (mzFilter !== 'all' && o.bucket !== mzFilter) return false;
+  if (mzYear !== 'all' && String(o.open_year || '') !== mzYear) return false;
+  if (mzCustomer !== 'all' && (o.customer || '') !== mzCustomer) return false;
   if (mzStatus === 'credit' && o.money_status !== 'credit') return false;
   if (mzStatus === 'over' && o.money_status !== 'over') return false;
   if (mzStatus === 'balanced' && o.money_status !== 'balanced') return false;
@@ -428,7 +442,8 @@ function mzPass(o) {
   if (mzStatus === 'noexp' && (o.exp_done || o.exp_agreed_mln != null)) return false;
   if (mzSearch) {
     const q = mzSearch.toLowerCase();
-    const blob = [o.name, o.full, o.contractor, o.work, o.uin].filter(Boolean).join(' ').toLowerCase();
+    const blob = [o.name, o.full, o.contractor, o.customer, o.ownership, o.work, o.uin, o.open_year]
+      .filter(Boolean).join(' ').toLowerCase();
     if (!blob.includes(q)) return false;
   }
   return true;
@@ -836,9 +851,12 @@ function renderMzTbl() {
       `<td class="obj"${riskTip}>` +
         `<span class="obj-name">${esc(o.full || o.name)}</span>` +
         (o.contractor ? `<span class="obj-sub">${esc(o.contractor)}</span>` : '') +
+        (o.ownership ? `<span class="obj-sub">${esc(o.ownership)}</span>` : '') +
         `<span class="obj-uin">${esc(o.uin)}</span>` +
       `</td>` +
       `<td class="work">${esc(o.work || '—')}</td>` +
+      `<td class="r">${o.open_year??'—'}</td>` +
+      `<td class="work">${esc(o.customer || '—')}</td>` +
       `<td class="r">${o.limit??'—'}</td>` +
       `<td class="r">${o.contract_value??'—'}</td>` +
       `<td class="r">${o.sg??'—'}</td><td class="r">${o.pct??'—'}</td>` +
@@ -846,7 +864,7 @@ function renderMzTbl() {
       `<td class="r">${deltaCell}</td>` +
       `<td>${expCell}</td>` +
       `<td><span class="pill ${STATUS_PILL[o.money_status]||''}">${STATUS_SHORT[o.money_status]||'—'}</span></td></tr>`;
-  }).join('') || '<tr><td colspan="10" class="note">Нет объектов</td></tr>';
+  }).join('') || '<tr><td colspan="12" class="note">Нет объектов</td></tr>';
   if (wrap) wrap.scrollTop = 0;
   document.querySelectorAll('#mzTbl tr.clickable').forEach(tr => {
     tr.onclick = () => {
@@ -904,9 +922,28 @@ function renderMzTbl() {
   if (mzUin) sel.value = mzUin;
   sel.onchange = e => mzSelectObject(e.target.value, { focus: true });
 
+  const yearSel = document.getElementById('fltYear');
+  const years = [...new Set(MZ.objects.map(o => o.open_year).filter(Boolean))].sort();
+  years.forEach(y => {
+    const opt = document.createElement('option');
+    opt.value = y; opt.textContent = y;
+    yearSel.appendChild(opt);
+  });
+  const custSel = document.getElementById('fltCustomer');
+  const customers = [...new Set(MZ.objects.map(o => o.customer).filter(Boolean))].sort(
+    (a, b) => a.localeCompare(b, 'ru')
+  );
+  customers.forEach(c => {
+    const opt = document.createElement('option');
+    opt.value = c; opt.textContent = c;
+    custSel.appendChild(opt);
+  });
+
   const refresh = () => { mzFocusUin = null; renderMzMatrix(); renderMzTbl(); };
   document.getElementById('fltWork').onchange = e => { mzFilter = e.target.value; refresh(); };
   document.getElementById('fltStatus').onchange = e => { mzStatus = e.target.value; refresh(); };
+  yearSel.onchange = e => { mzYear = e.target.value; refresh(); };
+  custSel.onchange = e => { mzCustomer = e.target.value; refresh(); };
   let searchTimer = null;
   document.getElementById('fltSearch').oninput = e => {
     clearTimeout(searchTimer);
