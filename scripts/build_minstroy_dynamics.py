@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Собрать динамику объектов Минстроя из папки Simple_List/ (срезы Акцента).
 
-Исключает снос. На выходе data/minstroy_dynamics.json для вкладки дашборда.
+Исключает снос. На выходе data/minstroy_dynamics.json для dashboard.html
+(см. scripts/build_minstroy_dashboard.py). Добавляет funds, marks, exp_kind.
 
   python3 scripts/build_minstroy_dynamics.py
+  python3 scripts/build_minstroy_dashboard.py
 """
 from __future__ import annotations
 
@@ -18,9 +20,24 @@ import openpyxl
 
 ROOT = Path(__file__).parent.parent
 SL_DIR = ROOT / "Simple_List"
+RAW_DIR = ROOT / "data" / "raw"
 OUT = ROOT / "data" / "minstroy_dynamics.json"
+KSG_CANDIDATES = [
+    RAW_DIR / "КСГ+Экспертиза_минстрой.xlsx",
+    RAW_DIR / "1708_КСГ+Экспертиза.xlsx",
+]
 
 CORRIDOR = 10.0  # ± п.п. СГ vs оплата
+
+
+def uin_key(v) -> str:
+    if v is None:
+        return ""
+    if isinstance(v, float):
+        # Excel часто даёт 1000002390.1 как float — сохраняем как есть через repr-safe
+        s = f"{v:.10f}".rstrip("0").rstrip(".")
+        return s
+    return str(v).strip()
 
 
 def stamp(name: str):
@@ -114,6 +131,155 @@ def money_status(sg, pct):
     return "balanced"
 
 
+def classify_exp(exp_done, egrz, exp_agreed) -> str:
+    """ТЧ — техчасть (есть заключение/ЕГРЗ), СД — смета (согласованная стоимость)."""
+    tch = bool(exp_done or egrz)
+    sd = bool(exp_agreed)
+    if tch and sd:
+        return "both"
+    if tch:
+        return "tch"
+    if sd:
+        return "sd"
+    return ""
+
+
+def fund_bucket(src: str):
+    s = (src or "").lower()
+    if "кик" in s or "казначейск" in s:
+        return "kik"
+    if "ибк" in s:
+        return "ibk"
+    if "федераль" in s:
+        return "fed"
+    if "муницип" in s:
+        return "mun"
+    if "московской области" in s:
+        return "mo"
+    return None
+
+
+def axis_date(d):
+    if not d:
+        return None
+    if isinstance(d, datetime):
+        return d.strftime("%d.%m.%y")
+    if hasattr(d, "year") and hasattr(d, "month") and hasattr(d, "day"):
+        return f"{d.day:02d}.{d.month:02d}.{str(d.year)[-2:]}"
+    s = parse_date(d)
+    return s.strftime("%d.%m.%y") if s else None
+
+
+def ksg_kind(proc: str):
+    p = (proc or "").strip()
+    if p == "Экспертиза" or p.startswith("Экспертиза "):
+        return "exp"
+    if p == "СМР" or p.startswith("СМР "):
+        return "smr"
+    if p.startswith("Начало функционирования"):
+        return "open"
+    return None
+
+
+def load_ksg_marks(uins: set[str]):
+    """Окончание плана и факта: экспертиза, СМР, открытие."""
+    path = next((p for p in KSG_CANDIDATES if p.exists()), None)
+    if not path:
+        print("KSG marks: no file, skip")
+        return {}
+    print(f"KSG marks from {path.name} ...", flush=True)
+    wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    ws = wb.active
+    acc: dict[str, dict] = {}
+    for row in ws.iter_rows(min_row=3, values_only=True):
+        if not row:
+            continue
+        uin = uin_key(row[0])
+        if uin not in uins:
+            continue
+        kind = ksg_kind(str(row[6] or ""))
+        if not kind:
+            continue
+        slot = acc.setdefault(uin, {}).setdefault(kind, {"plan": None, "fact": None})
+        fact_end = parse_date(row[8] if len(row) > 8 else None)
+        plan_end = parse_date(row[10] if len(row) > 10 else None)
+        if fact_end and (slot["fact"] is None or fact_end > slot["fact"]):
+            slot["fact"] = fact_end
+        if plan_end and (slot["plan"] is None or plan_end > slot["plan"]):
+            slot["plan"] = plan_end
+    wb.close()
+    out = {}
+    for uin, kinds in acc.items():
+        marks = {}
+        for key in ("exp", "smr", "open"):
+            slot = kinds.get(key) or {}
+            plan = axis_date(slot.get("plan"))
+            fact = axis_date(slot.get("fact"))
+            if plan or fact:
+                marks[key] = {"plan": plan, "fact": fact}
+        if marks:
+            out[uin] = marks
+    print(f"  marks for {len(out)} UINs")
+    return out
+
+
+def load_funding(path: Path, uins: set[str]):
+    """План и факт по источникам с последнего среза Simple List."""
+    if not path or not path.exists():
+        return {}
+    print(f"funds from {path.name} ...", flush=True)
+    wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    ws = wb.active
+    headers = list(next(ws.iter_rows(min_row=1, max_row=1, values_only=True)))
+    col = {h: i for i, h in enumerate(headers) if h}
+    need = [
+        "Код УИН",
+        "Наименование источника финансирования",
+        "Сумма планового финансирования",
+        "Сумма фактического финансирования",
+        "Год финансирования",
+    ]
+    if any(n not in col for n in need):
+        wb.close()
+        print("  skip funds: missing columns")
+        return {}
+    seen = set()
+    acc: dict[str, dict] = {}
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        uin = uin_key(row[col["Код УИН"]])
+        if uin not in uins:
+            continue
+        bucket = fund_bucket(str(row[col["Наименование источника финансирования"]] or ""))
+        if not bucket:
+            continue
+        plan = fnum(row[col["Сумма планового финансирования"]]) or 0.0
+        fact = fnum(row[col["Сумма фактического финансирования"]]) or 0.0
+        year = row[col["Год финансирования"]]
+        key = (uin, bucket, year, round(plan, 2), round(fact, 2))
+        if key in seen:
+            continue
+        seen.add(key)
+        slot = acc.setdefault(uin, {}).setdefault(bucket, {"plan": 0.0, "fact": 0.0})
+        slot["plan"] += plan
+        slot["fact"] += fact
+    wb.close()
+    out = {}
+    for uin, buckets in acc.items():
+        funds = []
+        for key in ("fed", "mo", "mun", "ibk", "kik"):
+            slot = buckets.get(key)
+            if not slot:
+                continue
+            plan = round(slot["plan"] / 1e6, 1)
+            fact = round(slot["fact"] / 1e6, 1)
+            if plan or fact:
+                funds.append({"k": key, "plan": plan, "fact": fact})
+        if funds:
+            out[uin] = funds
+    print(f"  funds for {len(out)} UINs")
+    return out
+
+
 def pay_pct_of(paid, limit, nmck, field_pct=None):
     """% оплаты: поле «Процент выплат» (= paid/предельная), иначе paid/лимит, иначе paid/НМЦК."""
     if field_pct is not None:
@@ -162,6 +328,7 @@ def load_file(path: Path, d):
     i_exp_start = c("Дата начала экспертизы")
     i_exp_done = c("Дата получения заключения (завершения ) экспертизы")
     i_exp_code = c("Код заявления на прохождение экспертизы")
+    i_egrz = c("Номер заключения экспертизы")
     if i_uin is None or i_grbs is None:
         wb.close()
         return {}
@@ -169,7 +336,7 @@ def load_file(path: Path, d):
     # сначала собираем все строки по УИН, потом сворачиваем
     rows_by: dict = defaultdict(list)
     for row in ws.iter_rows(min_row=2, values_only=True):
-        uin = row[i_uin]
+        uin = uin_key(row[i_uin])
         if not uin:
             continue
         grbs = str(row[i_grbs] or "").strip()
@@ -195,6 +362,7 @@ def load_file(path: Path, d):
         exp_start = None
         exp_done = None
         entered_exp = False
+        egrz = None
         # контракты по Р/Н (или anon), берём max nmck на rn
         contracts: dict = {}
         for row in rows:
@@ -230,6 +398,8 @@ def load_file(path: Path, d):
                 exp_done = dt
             if i_exp_code is not None and row[i_exp_code]:
                 entered_exp = True
+            if i_egrz is not None and row[i_egrz] and not egrz:
+                egrz = str(row[i_egrz]).strip()
 
             paid = fnum(row[i_paid]) if i_paid is not None else None
             adv = fnum(row[i_adv]) if i_adv is not None else None
@@ -285,6 +455,7 @@ def load_file(path: Path, d):
             "exp_start": exp_start,
             "exp_done": exp_done,
             "entered_exp": entered_exp,
+            "egrz": egrz,
         }
     return best
 
@@ -319,6 +490,15 @@ def main():
 
     # финальный портфель = объекты из последнего непустого среза (уже без сноса)
     last_date = max(max(p["d"] for p in pts) for pts in series.values())
+    last_file = next(f for f in reversed(files) if stamp(f.name) == last_date)
+
+    # предварительный список УИН последнего среза — для funds/marks
+    portfolio_uins = {
+        uin for uin, pts in series.items() if max(p["d"] for p in pts) == last_date
+    }
+    funding = load_funding(last_file, portfolio_uins)
+    ksg = load_ksg_marks(portfolio_uins)
+
     objects = []
     for uin, pts in series.items():
         pts = sorted(pts, key=lambda x: x["d"])
@@ -334,6 +514,7 @@ def main():
         exp_start = last.get("exp_start")
         exp_done = last.get("exp_done")
         entered_exp = bool(last.get("entered_exp"))
+        egrz = last.get("egrz")
         # протянуть nmck/лимит/экспертизу назад, если в ранних срезах пусто
         for p in pts:
             if (p.get("nmck") or 0) > 0:
@@ -352,6 +533,8 @@ def main():
                 exp_done = p["exp_done"]
             if p.get("entered_exp"):
                 entered_exp = True
+            if p.get("egrz"):
+                egrz = p["egrz"]
         # база % оплаты и рублёвого разрыва — предельная (лимит), иначе НМЦК
         pay_base = limit if limit > 0 else nmck
         # стоимости экспертизы в Simple List — тыс. ₽
@@ -414,18 +597,23 @@ def main():
                 "exp_in": fmt_date(exp_in),
                 "exp_start": fmt_date(exp_start),
                 "exp_done": fmt_date(exp_done),
+                "exp_kind": classify_exp(exp_done, egrz, exp_agreed),
                 "entered_exp": entered_exp,
                 "n_pts": len(traj),
                 "traj": traj,
+                "marks": ksg.get(uin) or {},
+                "funds": funding.get(uin) or [],
             }
         )
 
-    objects.sort(key=lambda o: (-(o["sg"] or -1), o["name"] or ""))
+    objects.sort(key=lambda o: (-(o["sg"] if o["sg"] is not None else -1), o["name"] or ""))
 
     n_credit = sum(1 for o in objects if o["money_status"] == "credit")
     n_over = sum(1 for o in objects if o["money_status"] == "over")
     sgs = [o["sg"] for o in objects if o["sg"] is not None]
     pcts = [o["pct"] for o in objects if o["pct"] is not None]
+    n_with_funds = sum(1 for o in objects if o["funds"])
+    n_with_marks = sum(1 for o in objects if o["marks"])
 
     def median(xs):
         if not xs:
@@ -444,6 +632,9 @@ def main():
             "n_over": n_over,
             "median_sg": median(sgs),
             "median_pct": median(pcts),
+            "n_with_funds": n_with_funds,
+            "n_with_marks": n_with_marks,
+            "simple_list": last_file.name,
             "note": "СГ и % оплаты — срезы Simple List: факт СГ и «Процент выплат» (= платежи / предельная стоимость). Несколько строк на УИН = годы финансирования; контрактные суммы — со строки с Р/Н.",
         },
         "objects": objects,

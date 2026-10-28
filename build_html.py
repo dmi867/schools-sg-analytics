@@ -2735,12 +2735,6 @@ def main():
     stamp = datetime.now().strftime("%d.%m.%Y")
     sub = f"{n} объектов, обновлено {stamp}"
 
-    dash_payload = dict(payload)
-    minstroy = load_minstroy()
-    if minstroy:
-        dash_payload["minstroy"] = minstroy
-    dash_json = json.dumps(dash_payload, ensure_ascii=False)
-
     method_html = (
         HEAD_STYLE.replace("__TITLE__", "СГ и выплаты — методика")
         .replace("__SUB__", sub + " — методика управления финансированием портфеля")
@@ -2750,26 +2744,14 @@ def main():
         + METHOD_BODY
         + METHOD_SCRIPT.replace("__DATA__", data_json)
     ).replace("__ICON_WARN__", ICON_WARN)
-    dashboard_html = (
-        HEAD_STYLE.replace("__TITLE__", "СГ и выплаты — дашборд")
-        .replace("__SUB__", sub + " — объекты, подрядчики, деньги против готовности")
-        .replace("__NAV__", '<a class="navlink" href="index.html">→ Методика и выводы</a>')
-        .replace("__WRAP__", "1600")
-        .replace("__CKS_LOGO__", CKS_LOGO_B64)
-        + DASHBOARD_BODY
-        + DASHBOARD_SCRIPT.replace("__DATA__", dash_json)
-    ).replace("__ICON_WARN__", ICON_WARN)
-
     out = ROOT / "index.html"
     out.write_text(method_html, encoding="utf-8")
     (ROOT / "sg-pay-analysis.html").write_text(method_html, encoding="utf-8")
-    dash_out = ROOT / "dashboard.html"
-    dash_out.write_text(dashboard_html, encoding="utf-8")
-    ms_n = (minstroy or {}).get("meta", {}).get("n")
+    # dashboard.html — scripts/build_minstroy_dashboard.py (портфель Минстроя, UI МинЖКХ)
     print(
-        f"OK: {out} ({out.stat().st_size} bytes) + {dash_out} ({dash_out.stat().st_size} bytes), "
-        f"{payload['stats']['n']} schools"
-        + (f", minstroy={ms_n}" if ms_n else "")
+        f"OK: {out} ({out.stat().st_size} bytes) + sg-pay-analysis.html, "
+        f"{payload['stats']['n']} schools (methodology). "
+        f"Dashboard: python3 scripts/build_minstroy_dashboard.py"
     )
 
 
