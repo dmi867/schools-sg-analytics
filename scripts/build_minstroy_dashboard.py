@@ -1229,14 +1229,15 @@ function renderMzTbl() {
     if (u.includes('ДИРЕКЦИЯ ЗАКАЗЧИКА КАПИТАЛЬНОГО') || /(^|\s)ДЗКС(\s|$)/.test(u)) return 'ГКУ МО ДЗКС';
     if (u.includes('ЕДИНОГО ЗАКАЗЧИКА') || /(^|\s)ДЕЗ(\s|$)/.test(u)) return 'ГКУ МО ДЕЗ';
     if (s === 'ГКУ МО ДЗКС' || s === 'ГКУ МО ДЕЗ') return s;
-    // уже короткое «Администрация «…»» / МКУ / МБУ — как есть
-    if (/^Администрация|^МКУ |^МБУ |^ГБУЗ |^Упр\. /.test(s)) return s;
+    // уже короткое «Администрация …» / МКУ / МБУ — как есть (кавычки у администраций убираем)
+    if (/^Администрация/.test(s)) return String(s).replace(/[«»"]/g, '').replace(/\s+/g, ' ').trim();
+    if (/^МКУ |^МБУ |^ГБУЗ |^Упр\. /.test(s)) return s;
     // Адм. … городского округа X
     let m = String(s).match(/(?:Адм\.|Администрация)\s+(?:городского\s+округа\s+)?(.+?)(?:\s+Московской|\s*,|$)/i);
     if (m) {
       let place = m[1].replace(/[A-ZА-ЯЁ]{2,}/g, w => w[0] + w.slice(1).toLowerCase()).trim();
-      place = place.replace(/\s+городского\s+округа$/i, '').replace(/ого$/i, 'ий');
-      return place ? `Администрация «${place}»` : 'Администрация';
+      place = place.replace(/\s+городского\s+округа$/i, '').replace(/[«»"]/g, '').replace(/ого$/i, 'ий');
+      return place ? `Администрация ${place}` : 'Администрация';
     }
     return String(s)
       .replace(/[A-ZА-ЯЁ]{2,}/g, w => w[0] + w.slice(1).toLowerCase())

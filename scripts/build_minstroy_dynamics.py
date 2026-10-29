@@ -109,7 +109,7 @@ def _title_ru(s: str) -> str:
 
 
 def short_customer(c, nmax=72):
-    """Короткие подписи для фильтров: ГКУ МО ДЗКС / ДЕЗ, Администрация «…»."""
+    """Короткие подписи для фильтров: ГКУ МО ДЗКС / ДЕЗ, Администрация …."""
     if not c:
         return None
     raw = str(c).strip()
@@ -135,7 +135,7 @@ def short_customer(c, nmax=72):
         place = re.sub(r"ого$", "ий", place, flags=re.I) if place.lower().endswith("ого") else place
         if place.lower().endswith("ого"):
             place = place[:-3] + "ий"
-        return f"Администрация «{place}»" if place else "Администрация"
+        return f"Администрация {place}" if place else "Администрация"
 
     # Упр. культуры администрации г.о. X
     if u.startswith("УПР.") or u.startswith("УПРАВЛЕНИЕ"):
