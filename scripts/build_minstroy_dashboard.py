@@ -320,6 +320,7 @@ EXON_HEAD = r"""<!DOCTYPE html>
   .quad-card.active { box-shadow: inset 0 0 0 1px var(--q-color); background: hsl(var(--muted)) }
   .quad-card .qn { font-size: 1.35rem; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums }
   .quad-card .ql { margin-top: .2rem; font-size: .75rem; font-weight: 600 }
+  .quad-card .qd { margin-top: .3rem; font-size: .6875rem; font-weight: 400; color: hsl(var(--muted-foreground)); line-height: 1.35 }
 </style>
 </head>
 <body>
@@ -424,23 +425,31 @@ PAGE_BODY = r"""
 
   <div class="tabpanel stack" data-tab="contractors" hidden>
   <div class="kpis" id="contrKpis">
-    <div class="kpi"><p class="l">Подрядчиков</p><p class="n" id="cN">—</p></div>
-    <div class="kpi"><p class="l">Кредитуют объекты</p><p class="n warn" id="cCredit">—</p></div>
-    <div class="kpi"><p class="l">Аванс впереди работ</p><p class="n" id="cAdvance">—</p></div>
-    <div class="kpi"><p class="l">Лимит в срезе</p><p class="n" id="cLimit">—</p></div>
+    <div class="kpi" title="Число подрядчиков в текущем фильтре (без «Без подрядчика»)">
+      <p class="l">Подрядчиков</p><p class="n" id="cN">—</p>
+    </div>
+    <div class="kpi" title="Объекты, где СГ выше оплаты больше чем на 10 п.п. — подрядчик фактически кредитует стройку">
+      <p class="l">Кредитуют объекты</p><p class="n warn" id="cCredit">—</p>
+    </div>
+    <div class="kpi" title="Подрядчики в квадранте «Аванс»: средняя оплата ≥ порога, средняя СГ ниже порога">
+      <p class="l">Аванс впереди работ</p><p class="n" id="cAdvance">—</p>
+    </div>
+    <div class="kpi" title="Сумма лимитов объектов у подрядчиков в срезе">
+      <p class="l">Лимит в срезе</p><p class="n" id="cLimit">—</p>
+    </div>
   </div>
 
   <div class="card">
     <div class="card-hd">
       <div>
         <h2>Карта подрядчиков</h2>
-        <p>По горизонтали — стройготовность, по вертикали — оплата. Размер точки — лимит. Крест — пороги.</p>
+        <p>Точка — подрядчик: средние СГ и оплата (взвешены по лимиту), размер — лимит. Крест — пороги: делят карту на 4 группы. Клик по карточке или точке — фильтр / объекты.</p>
       </div>
     </div>
     <div class="card-bd">
       <div class="quad-tools">
-        <label>Порог СГ, % <input type="number" id="qSg" min="0" max="100" step="5" value="50"></label>
-        <label>Порог оплаты, % <input type="number" id="qPay" min="0" max="100" step="5" value="50"></label>
+        <label title="Вертикальная граница на карте">Порог СГ, % <input type="number" id="qSg" min="0" max="100" step="5" value="50"></label>
+        <label title="Горизонтальная граница на карте">Порог оплаты, % <input type="number" id="qPay" min="0" max="100" step="5" value="50"></label>
       </div>
       <div class="quad-cards" id="quadCards"></div>
       <div class="chart" style="height:400px"><canvas id="cQuad"></canvas></div>
@@ -451,7 +460,7 @@ PAGE_BODY = r"""
     <div class="card-hd">
       <div>
         <h2>Рейтинг подрядчиков</h2>
-        <p>Сортировка по лимиту. Клик — объекты этого подрядчика</p>
+        <p>Сортировка по лимиту. СГ и оплата — средние по портфелю, взвешенные по лимиту. Клик — объекты подрядчика</p>
       </div>
     </div>
     <div class="tbl-wrap">
@@ -459,12 +468,12 @@ PAGE_BODY = r"""
         <thead><tr>
           <th>Подрядчик</th>
           <th class="r">Объектов</th>
-          <th class="r">Лимит, млн</th>
-          <th class="r">СГ ср., %</th>
-          <th class="r">Оплата ср., %</th>
-          <th class="r">Кредитует</th>
-          <th class="r">Разрыв, млн</th>
-          <th>Группа</th>
+          <th class="r" title="Сумма лимитов объектов">Лимит, млн</th>
+          <th class="r" title="Средняя стройготовность, взвешенная по лимиту">СГ ср., %</th>
+          <th class="r" title="Средний % оплаты, взвешенный по лимиту">Оплата ср., %</th>
+          <th class="r" title="Число объектов, где СГ заметно выше оплаты (подрядчик кредитует)">Кредитует</th>
+          <th class="r" title="Сумма рублёвого разрыва на объектах с кредитованием">Разрыв, млн</th>
+          <th title="Квадрант относительно порогов СГ и оплаты">Группа</th>
         </tr></thead>
         <tbody id="contrTbl"></tbody>
       </table>
@@ -836,10 +845,26 @@ function renderPortfolio() {
 }
 
 const QUAD_META = {
-  stable:  { label: 'Устойчивые', color: '#16a34a' },
-  cashgap: { label: 'Кредитует подрядчик', color: '#d97706' },
-  advance: { label: 'Аванс впереди работ', color: '#7c3aed' },
-  early:   { label: 'Ранняя стадия', color: '#0B6CB8' },
+  stable:  {
+    label: 'Устойчивые',
+    color: '#16a34a',
+    hint: 'СГ и оплата ≥ порогов — работы и деньги идут вместе',
+  },
+  cashgap: {
+    label: 'Кредитует подрядчик',
+    color: '#d97706',
+    hint: 'СГ ≥ порога, оплата ниже — стройка впереди денег',
+  },
+  advance: {
+    label: 'Аванс впереди работ',
+    color: '#7c3aed',
+    hint: 'Оплата ≥ порога, СГ ниже — деньги впереди готовности',
+  },
+  early:   {
+    label: 'Ранняя стадия',
+    color: '#0B6CB8',
+    hint: 'СГ и оплата ниже порогов — старт или пробуксовка',
+  },
 };
 let quadState = { sg: 50, pay: 50, active: null };
 
@@ -944,8 +969,10 @@ function renderQuad() {
   document.getElementById('quadCards').innerHTML = Object.keys(QUAD_META).map(k => {
     const m = QUAD_META[k];
     const active = quadState.active === k ? ' active' : '';
-    return `<div class="quad-card${active}" data-quad="${k}" style="--q-color:${m.color}">` +
-      `<div class="qn">${counts[k]}</div><div class="ql">${m.label}</div></div>`;
+    return `<div class="quad-card${active}" data-quad="${k}" style="--q-color:${m.color}" title="${esc(m.hint)}">` +
+      `<div class="qn">${counts[k]}</div>` +
+      `<div class="ql">${m.label}</div>` +
+      `<div class="qd">${esc(m.hint)}</div></div>`;
   }).join('');
   document.querySelectorAll('#quadCards .quad-card').forEach(el => {
     el.onclick = () => {
