@@ -113,31 +113,73 @@
   .kpi.money { text-align: left }
   .kpi.money .pair { display: flex; justify-content: space-between; gap: .75rem; margin: .35rem 0 0; font-size: .8125rem; color: hsl(var(--muted-foreground)) }
   .kpi.money .pair b { color: hsl(var(--foreground)); font-variant-numeric: tabular-nums }
-  /* Фильтры: multi-select + поиск */
-  .filters { display: grid; grid-template-columns: 1fr; gap: .75rem }
-  @media (min-width: 900px) { .filters { grid-template-columns: 1fr 1.4fr 1fr 1fr 1.2fr } }
-  .field {
-    display: flex; flex-direction: column; gap: .25rem;
+  /* Фильтры: кнопки + чекбоксы + чипы */
+  .filters { display: flex; flex-direction: column; gap: .65rem }
+  .filter-row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center }
+  .filter-dd { position: relative }
+  .filter-btn {
+    display: inline-flex; align-items: center; gap: .4rem;
+    height: 36px; padding: 0 .85rem; border-radius: .5rem;
+    border: 1px solid hsl(var(--border)); background: #fff;
+    font: 500 13px Inter, sans-serif; color: hsl(var(--foreground));
+    cursor: pointer; white-space: nowrap;
+    transition: border-color .15s, box-shadow .15s, background .15s;
+  }
+  .filter-btn:hover { background: hsl(var(--muted)) }
+  .filter-btn.open, .filter-btn.has {
+    border-color: hsl(var(--primary) / .45);
+    background: rgba(31,134,130,.06);
+    color: hsl(var(--primary));
+  }
+  .filter-btn .caret { font-size: .65rem; opacity: .55 }
+  .filter-btn .count {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 1.15rem; height: 1.15rem; padding: 0 .3rem; border-radius: 999px;
+    background: var(--teal); color: #fff; font-size: .65rem; font-weight: 700;
+  }
+  .filter-menu {
+    position: absolute; top: calc(100% + 4px); left: 0; z-index: 40;
+    min-width: 220px; max-width: min(360px, 90vw); max-height: 280px; overflow: auto;
     background: #fff; border: 1px solid hsl(var(--border)); border-radius: .5rem;
-    padding: .4rem .65rem .5rem; min-height: 40px;
+    box-shadow: 0 10px 28px rgb(15 23 42 / .12); padding: .35rem;
   }
-  .field > span {
-    font-size: .65rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
-    color: hsl(var(--muted-foreground));
+  .filter-menu label {
+    display: flex; align-items: flex-start; gap: .5rem;
+    padding: .45rem .55rem; border-radius: .35rem; cursor: pointer;
+    font-size: .8125rem; line-height: 1.3; color: hsl(var(--foreground));
   }
-  .field.select-row {
-    flex-direction: row; align-items: center; gap: .5rem; padding: 0 .75rem; height: 40px; min-height: 40px;
+  .filter-menu label:hover { background: hsl(var(--muted)) }
+  .filter-menu input { margin-top: .15rem; accent-color: var(--teal); flex-shrink: 0 }
+  .filter-search {
+    display: flex; align-items: center; gap: .5rem;
+    flex: 1; min-width: 180px; height: 36px; padding: 0 .75rem;
+    background: #fff; border: 1px solid hsl(var(--border)); border-radius: .5rem;
   }
-  .field select, .field input {
+  .filter-search input {
     flex: 1; min-width: 0; border: none; outline: none; background: transparent;
-    font: inherit; color: hsl(var(--foreground));
+    font: inherit; color: hsl(var(--foreground)); height: 100%;
   }
-  .field select[multiple] {
-    height: 88px; width: 100%; padding: 0;
+  .filter-search svg { width: 16px; height: 16px; color: hsl(var(--muted-foreground)); flex-shrink: 0 }
+  .filter-chips { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; min-height: 0 }
+  .chip {
+    display: inline-flex; align-items: center; gap: .35rem;
+    height: 28px; padding: 0 .55rem 0 .7rem; border-radius: 999px;
+    background: rgba(31,134,130,.1); color: hsl(200 60% 23%);
+    font-size: .75rem; font-weight: 550; max-width: 280px;
   }
-  .field select[multiple] option { padding: .15rem .25rem }
-  .field input { height: 100% }
-  .field svg { width: 16px; height: 16px; color: hsl(var(--muted-foreground)); flex-shrink: 0 }
+  .chip b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+  .chip button {
+    border: none; background: transparent; cursor: pointer; padding: 0;
+    width: 16px; height: 16px; border-radius: 99px; color: inherit; opacity: .55;
+    display: inline-flex; align-items: center; justify-content: center; font-size: .85rem; line-height: 1;
+  }
+  .chip button:hover { opacity: 1; background: rgba(0,0,0,.06) }
+  .filter-meta { font-size: .75rem; color: hsl(var(--muted-foreground)); margin-left: auto }
+  .filter-clear {
+    border: none; background: transparent; color: hsl(var(--muted-foreground));
+    font: 500 12px Inter, sans-serif; cursor: pointer; padding: .25rem .4rem; border-radius: .35rem;
+  }
+  .filter-clear:hover { color: hsl(var(--foreground)); background: hsl(var(--muted)) }
   /* Card panels */
   .card {
     background: #fff; border: 1px solid hsl(var(--border)); border-radius: .5rem;
@@ -196,6 +238,9 @@
   .pill.ok { background: var(--ok-bg); color: #15803d }
   .pill.warn { background: var(--warn-bg); color: #b45309 }
   .pill.err { background: var(--err-bg); color: #b91c1c }
+  .pill.muted { background: hsl(var(--muted)); color: hsl(var(--muted-foreground)) }
+  .cell-stack.start .pill { align-self: flex-start }
+  .muted { color: hsl(var(--muted-foreground)) }
   .quad-tools { display: flex; flex-wrap: wrap; gap: .75rem; align-items: center; margin-bottom: .75rem; font-size: .8125rem; color: hsl(var(--muted-foreground)) }
   .quad-tools input[type=number] { width: 64px; font: inherit; height: 32px; padding: 0 .5rem; border: 1px solid hsl(var(--border)); border-radius: .5rem; color: hsl(var(--foreground)) }
   .quad-cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: .5rem; margin-bottom: .75rem }
@@ -265,7 +310,7 @@
           <th class="r">СГ, %</th><th class="r">Оплата, %</th>
           <th class="r" title="Согласованная смета после экспертизы">После экспертизы, млн</th>
           <th class="r">Δ сметы</th>
-          <th title="Наведите на дату: ТЧ — техчасть, СД — смета, ТЧ+СД — оба">Экспертиза</th>
+          <th title="ТЧ — техчасть, СД — смета">Экспертиза</th>
           <th>Статус</th>
         </tr></thead>
         <tbody id="mzTbl"></tbody>
@@ -295,38 +340,33 @@
 
   <div class="tabpanel stack" data-tab="objects" hidden>
   <div class="filters">
-    <label class="field">
-      <span>Год открытия · ⌘/Ctrl</span>
-      <select id="fltYear" multiple size="4"></select>
-    </label>
-    <label class="field">
-      <span>Заказчик · ⌘/Ctrl</span>
-      <select id="fltCustomer" multiple size="4"></select>
-    </label>
-    <label class="field">
-      <span>Вид работ · ⌘/Ctrl</span>
-      <select id="fltWork" multiple size="4">
-        <option value="капремонт">Капремонт</option>
-        <option value="строительство">Строительство</option>
-        <option value="реконструкция">Реконструкция</option>
-        <option value="прочее">Прочее</option>
-      </select>
-    </label>
-    <label class="field">
-      <span>Статус · ⌘/Ctrl</span>
-      <select id="fltStatus" multiple size="4">
-        <option value="credit">Кредитует</option>
-        <option value="over">Избыток оплаты</option>
-        <option value="balanced">Баланс</option>
-        <option value="sg">СГ &gt; 0</option>
-        <option value="exp">Есть экспертиза</option>
-        <option value="noexp">Без экспертизы</option>
-      </select>
-    </label>
-    <label class="field select-row">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-      <input id="fltSearch" type="search" placeholder="Поиск..." autocomplete="off">
-    </label>
+    <div class="filter-row" id="filterRow">
+      <div class="filter-dd" data-key="year">
+        <button type="button" class="filter-btn" id="btnYear">Год открытия <span class="caret">▾</span></button>
+        <div class="filter-menu" id="menuYear" hidden></div>
+      </div>
+      <div class="filter-dd" data-key="customer">
+        <button type="button" class="filter-btn" id="btnCustomer">Заказчик <span class="caret">▾</span></button>
+        <div class="filter-menu" id="menuCustomer" hidden></div>
+      </div>
+      <div class="filter-dd" data-key="work">
+        <button type="button" class="filter-btn" id="btnWork">Вид работ <span class="caret">▾</span></button>
+        <div class="filter-menu" id="menuWork" hidden></div>
+      </div>
+      <div class="filter-dd" data-key="status">
+        <button type="button" class="filter-btn" id="btnStatus">Статус <span class="caret">▾</span></button>
+        <div class="filter-menu" id="menuStatus" hidden></div>
+      </div>
+      <div class="filter-search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+        <input id="fltSearch" type="search" placeholder="Поиск по объекту, подрядчику, УИН…" autocomplete="off">
+      </div>
+    </div>
+    <div class="filter-row">
+      <div class="filter-chips" id="filterChips"></div>
+      <span class="filter-meta" id="filterMeta"></span>
+      <button type="button" class="filter-clear" id="filterClear" hidden>Сбросить</button>
+    </div>
   </div>
 
   <div class="card">
@@ -338,6 +378,32 @@
     </div>
     <div class="card-bd">
       <div class="chart tall"><canvas id="cMzMatrix"></canvas></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-hd">
+      <div>
+        <h2>Объекты по фильтру</h2>
+        <p>Те же фильтры, что и у матрицы. Клик — траектория ниже</p>
+      </div>
+    </div>
+    <div class="tbl-wrap">
+      <table class="full dense">
+        <thead><tr>
+          <th>Объект</th>
+          <th>Вид работ</th>
+          <th class="r">Год откр.</th>
+          <th>Заказчик</th>
+          <th class="r">Лимит, млн</th><th class="r">Контракт, млн</th>
+          <th class="r">СГ, %</th><th class="r">Оплата, %</th>
+          <th class="r">После экспертизы, млн</th>
+          <th class="r">Δ сметы</th>
+          <th>Экспертиза</th>
+          <th>Статус</th>
+        </tr></thead>
+        <tbody id="mzObjTbl"></tbody>
+      </table>
     </div>
   </div>
 
@@ -415,16 +481,33 @@ let mzYears = ['2026'], mzCustomers = [], mzWorks = [], mzStatuses = [];
 let mzSearch = '', mzUin = null, mzFocusUin = null;
 let chartMzMatrix = null, chartMzTraj = null, chartQuad = null;
 
-function selectedValues(sel) {
-  return [...sel.selectedOptions].map(o => o.value);
-}
+const WORK_OPTS = [
+  { v: 'капремонт', l: 'Капремонт' },
+  { v: 'строительство', l: 'Строительство' },
+  { v: 'реконструкция', l: 'Реконструкция' },
+  { v: 'прочее', l: 'Прочее' },
+];
+const STATUS_OPTS = [
+  { v: 'credit', l: 'Кредитует' },
+  { v: 'over', l: 'Избыток оплаты' },
+  { v: 'balanced', l: 'Баланс' },
+  { v: 'sg', l: 'СГ > 0' },
+  { v: 'exp', l: 'Есть экспертиза' },
+  { v: 'noexp', l: 'Без экспертизы' },
+];
+const EXP_KIND = {
+  both: { l: 'ТЧ+СД', tip: 'Техчасть и смета', c: 'ok' },
+  tch:  { l: 'ТЧ', tip: 'Только техчасть', c: 'ok' },
+  sd:   { l: 'СД', tip: 'Только смета', c: 'ok' },
+};
+
 function statusMatch(o, st) {
   if (st === 'credit') return o.money_status === 'credit';
   if (st === 'over') return o.money_status === 'over';
   if (st === 'balanced') return o.money_status === 'balanced';
   if (st === 'sg') return o.sg > 0;
-  if (st === 'exp') return !!(o.exp_done || o.exp_agreed_mln != null);
-  if (st === 'noexp') return !(o.exp_done || o.exp_agreed_mln != null);
+  if (st === 'exp') return !!(o.exp_done || o.exp_agreed_mln != null || o.exp_kind);
+  if (st === 'noexp') return !(o.exp_done || o.exp_agreed_mln != null || o.exp_kind);
   return true;
 }
 function mzPass(o) {
@@ -439,6 +522,33 @@ function mzPass(o) {
     if (!blob.includes(q)) return false;
   }
   return true;
+}
+function expCellHtml(o) {
+  const kind = EXP_KIND[o.exp_kind];
+  const bits = [];
+  if (kind) {
+    bits.push(`<span class="pill ${kind.c}" title="${esc(kind.tip)}">${kind.l}</span>`);
+  }
+  if (o.exp_done) {
+    bits.push(`<span class="exp-date">завершена ${esc(o.exp_done)}</span>`);
+    if (o.exp_start) bits.push(`<span class="exp-date">старт ${esc(o.exp_start)}</span>`);
+    else if (o.exp_in) bits.push(`<span class="exp-date">заход ${esc(o.exp_in)}</span>`);
+  } else if (o.exp_in || o.exp_start) {
+    bits.push(`<span class="pill warn">в экспертизе</span>`);
+    if (o.exp_start) bits.push(`<span class="exp-date">старт ${esc(o.exp_start)}</span>`);
+    if (o.exp_in) bits.push(`<span class="exp-date">заход ${esc(o.exp_in)}</span>`);
+  } else if (o.entered_exp) {
+    bits.push(`<span class="pill warn">заявка</span>`);
+  } else if (!kind) {
+    return '<span class="muted">нет данных</span>';
+  }
+  return `<div class="cell-stack start">${bits.join('')}</div>`;
+}
+function toggleIn(arr, v) {
+  const i = arr.indexOf(v);
+  if (i >= 0) arr.splice(i, 1);
+  else arr.push(v);
+  return arr;
 }
 function mzFiltered() { return (MZ.objects || []).filter(mzPass); }
 
@@ -816,58 +926,75 @@ function drawMzTraj(uin) {
   chartMzTraj = new Chart(document.getElementById('cMzTraj'), cfg);
 }
 
-function renderMzTbl() {
-  const rows = MZ.objects.slice().sort((a,b) => (b.sg||0)-(a.sg||0));
-  const wrap = document.getElementById('mzTbl').closest('.tbl-wrap');
-  document.getElementById('mzTbl').innerHTML = rows.map(o => {
-    const active = o.uin === mzUin ? ' row-active' : '';
-    const ovCls = o.exp_overrun > 0 ? 'pos' : (o.exp_overrun < 0 ? 'neg' : '');
-    const deltaCell = o.exp_delta_mln != null
-      ? `<div class="cell-stack end"><span class="amt ${ovCls}">${o.exp_delta_mln>0?'+':''}${o.exp_delta_mln}</span>` +
-        (o.exp_overrun!=null ? `<span class="pct ${ovCls}">${o.exp_overrun>0?'+':''}${o.exp_overrun}%</span>` : '') +
-        `</div>`
-      : '—';
-    const KIND = { both: 'ТЧ+СД — техчасть и смета', tch: 'ТЧ — только техчасть', sd: 'СД — только смета' };
-    const kindTip = KIND[o.exp_kind] || '';
-    const expTip = [kindTip, o.exp_in ? 'заход ' + o.exp_in : '', o.exp_start ? 'старт ' + o.exp_start : ''].filter(Boolean).join(' · ');
-    let expCell = '—';
-    if (o.exp_done) {
-      expCell = `<span title="${esc(expTip)}">${o.exp_done}</span>`;
-    } else if (o.exp_in) {
-      expCell = `<span class="pill warn" title="${esc(expTip || ('заход ' + o.exp_in))}">в эксп.</span>`;
-    } else if (o.entered_exp) {
-      expCell = `<span class="pill warn" title="${esc(kindTip || 'заявка на экспертизу')}">заявка</span>`;
-    }
-    const riskTip = o.risk ? ` title="${esc(o.risk)}"` : '';
-    return `<tr class="clickable${active}" data-uin="${o.uin}">` +
-      `<td class="obj"${riskTip}>` +
-        `<span class="obj-name">${esc(o.full || o.name)}</span>` +
-        (o.contractor ? `<span class="obj-sub">${esc(o.contractor)}</span>` : '') +
-        (o.ownership ? `<span class="obj-sub">${esc(o.ownership)}</span>` : '') +
-        `<span class="obj-uin">${esc(o.uin)}</span>` +
-      `</td>` +
-      `<td class="work">${esc(o.work || '—')}</td>` +
-      `<td class="r">${o.open_year??'—'}</td>` +
-      `<td class="work">${esc(o.customer || '—')}</td>` +
-      `<td class="r">${o.limit??'—'}</td>` +
-      `<td class="r">${o.contract_value??'—'}</td>` +
-      `<td class="r">${o.sg??'—'}</td><td class="r">${o.pct??'—'}</td>` +
-      `<td class="r">${o.exp_agreed_mln??'—'}</td>` +
-      `<td class="r">${deltaCell}</td>` +
-      `<td>${expCell}</td>` +
-      `<td><span class="pill ${STATUS_PILL[o.money_status]||''}">${STATUS_SHORT[o.money_status]||'—'}</span></td></tr>`;
-  }).join('') || '<tr><td colspan="12" class="note">Нет объектов</td></tr>';
-  if (wrap) wrap.scrollTop = 0;
-  document.querySelectorAll('#mzTbl tr.clickable').forEach(tr => {
+function objectRowHtml(o, { stayOnObjects = false } = {}) {
+  const active = o.uin === mzUin ? ' row-active' : '';
+  const ovCls = o.exp_overrun > 0 ? 'pos' : (o.exp_overrun < 0 ? 'neg' : '');
+  const deltaCell = o.exp_delta_mln != null
+    ? `<div class="cell-stack end"><span class="amt ${ovCls}">${o.exp_delta_mln>0?'+':''}${o.exp_delta_mln}</span>` +
+      (o.exp_overrun!=null ? `<span class="pct ${ovCls}">${o.exp_overrun>0?'+':''}${o.exp_overrun}%</span>` : '') +
+      `</div>`
+    : '—';
+  const afterExp = o.exp_agreed_mln != null
+    ? `<div class="cell-stack end"><span class="amt">${o.exp_agreed_mln}</span>` +
+      (o.exp_plan_mln != null ? `<span class="pct">план ${o.exp_plan_mln}</span>` : '') +
+      `</div>`
+    : '—';
+  const riskTip = o.risk ? ` title="${esc(o.risk)}"` : '';
+  return `<tr class="clickable${active}" data-uin="${o.uin}" data-stay="${stayOnObjects ? '1' : '0'}">` +
+    `<td class="obj"${riskTip}>` +
+      `<span class="obj-name">${esc(o.full || o.name)}</span>` +
+      (o.contractor ? `<span class="obj-sub">подрядчик · ${esc(o.contractor)}</span>` : '') +
+      (o.ownership ? `<span class="obj-sub">${esc(o.ownership)}</span>` : '') +
+      `<span class="obj-uin">${esc(o.uin)}</span>` +
+    `</td>` +
+    `<td class="work">${esc(o.work || '—')}</td>` +
+    `<td class="r">${o.open_year??'—'}</td>` +
+    `<td class="work">${esc(o.customer || '—')}</td>` +
+    `<td class="r">${o.limit??'—'}</td>` +
+    `<td class="r">${o.contract_value??'—'}</td>` +
+    `<td class="r">${o.sg??'—'}</td><td class="r">${o.pct??'—'}</td>` +
+    `<td class="r">${afterExp}</td>` +
+    `<td class="r">${deltaCell}</td>` +
+    `<td>${expCellHtml(o)}</td>` +
+    `<td><span class="pill ${STATUS_PILL[o.money_status]||''}">${STATUS_SHORT[o.money_status]||'—'}</span></td></tr>`;
+}
+function bindObjectRows(rootSel) {
+  document.querySelectorAll(rootSel + ' tr.clickable').forEach(tr => {
     tr.onclick = () => {
       mzUin = tr.dataset.uin;
       mzFocusUin = null;
       const sel = document.getElementById('selMz');
       if (sel) sel.value = mzUin;
       renderMzTbl();
-      window.showTab('objects');
+      if (tr.dataset.stay === '1') {
+        drawMzTraj(mzUin);
+        document.getElementById('cMzTraj')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      } else {
+        window.showTab('objects');
+      }
     };
   });
+}
+function renderMzTbl() {
+  const all = MZ.objects.slice().sort((a,b) => (b.sg||0)-(a.sg||0));
+  const filtered = mzFiltered().slice().sort((a,b) => (b.sg||0)-(a.sg||0));
+  const wrap = document.getElementById('mzTbl')?.closest('.tbl-wrap');
+  document.getElementById('mzTbl').innerHTML =
+    all.map(o => objectRowHtml(o)).join('') ||
+    '<tr><td colspan="12" class="note">Нет объектов</td></tr>';
+  if (wrap) wrap.scrollTop = 0;
+  bindObjectRows('#mzTbl');
+
+  const objTbl = document.getElementById('mzObjTbl');
+  if (objTbl) {
+    const wrap2 = objTbl.closest('.tbl-wrap');
+    objTbl.innerHTML =
+      filtered.map(o => objectRowHtml(o, { stayOnObjects: true })).join('') ||
+      '<tr><td colspan="12" class="note">Нет объектов по фильтру</td></tr>';
+    if (wrap2) wrap2.scrollTop = 0;
+    bindObjectRows('#mzObjTbl');
+  }
+  renderFilterChrome();
 }
 
 (function init() {
@@ -914,46 +1041,158 @@ function renderMzTbl() {
   if (mzUin) sel.value = mzUin;
   sel.onchange = e => mzSelectObject(e.target.value, { focus: true });
 
-  const yearSel = document.getElementById('fltYear');
   const years = [...new Set(MZ.objects.map(o => o.open_year).filter(Boolean))].sort();
-  years.forEach(y => {
-    const opt = document.createElement('option');
-    opt.value = y; opt.textContent = y;
-    if (y === '2026') opt.selected = true;
-    yearSel.appendChild(opt);
-  });
-  const custSel = document.getElementById('fltCustomer');
-  const customers = [...new Set(MZ.objects.map(o => o.customer).filter(Boolean))].sort(
-    (a, b) => a.localeCompare(b, 'ru')
-  );
-  customers.forEach(c => {
-    const opt = document.createElement('option');
-    opt.value = c; opt.textContent = c;
-    custSel.appendChild(opt);
+  const customers = [...new Set(MZ.objects.map(o => o.customer).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, 'ru'));
+
+  function fillCheckMenu(menu, opts, selected, onToggle) {
+    menu.innerHTML = opts.map(o => {
+      const checked = selected.includes(o.v) ? ' checked' : '';
+      return `<label><input type="checkbox" value="${esc(o.v)}"${checked}><span>${esc(o.l)}</span></label>`;
+    }).join('');
+    menu.querySelectorAll('input').forEach(inp => {
+      inp.onchange = () => { onToggle(inp.value); refreshFilters(); };
+    });
+  }
+  function syncMenus() {
+    fillCheckMenu(
+      document.getElementById('menuYear'),
+      years.map(y => ({ v: y, l: y })),
+      mzYears,
+      v => { mzYears = toggleIn(mzYears.slice(), v); }
+    );
+    fillCheckMenu(
+      document.getElementById('menuCustomer'),
+      customers.map(c => ({ v: c, l: c })),
+      mzCustomers,
+      v => { mzCustomers = toggleIn(mzCustomers.slice(), v); }
+    );
+    fillCheckMenu(
+      document.getElementById('menuWork'),
+      WORK_OPTS,
+      mzWorks,
+      v => { mzWorks = toggleIn(mzWorks.slice(), v); }
+    );
+    fillCheckMenu(
+      document.getElementById('menuStatus'),
+      STATUS_OPTS,
+      mzStatuses,
+      v => { mzStatuses = toggleIn(mzStatuses.slice(), v); }
+    );
+  }
+  window.renderFilterChrome = function renderFilterChrome() {
+    const map = [
+      ['btnYear', mzYears.length],
+      ['btnCustomer', mzCustomers.length],
+      ['btnWork', mzWorks.length],
+      ['btnStatus', mzStatuses.length],
+    ];
+    map.forEach(([id, n]) => {
+      const btn = document.getElementById(id);
+      if (!btn) return;
+      btn.classList.toggle('has', n > 0);
+      let count = btn.querySelector('.count');
+      if (n > 0) {
+        if (!count) {
+          count = document.createElement('span');
+          count.className = 'count';
+          btn.insertBefore(count, btn.querySelector('.caret'));
+        }
+        count.textContent = String(n);
+      } else if (count) {
+        count.remove();
+      }
+    });
+    const chips = [];
+    mzYears.forEach(y => chips.push({ key: 'year', v: y, l: 'Год ' + y }));
+    mzCustomers.forEach(c => chips.push({ key: 'customer', v: c, l: c }));
+    mzWorks.forEach(w => {
+      const opt = WORK_OPTS.find(x => x.v === w);
+      chips.push({ key: 'work', v: w, l: opt ? opt.l : w });
+    });
+    mzStatuses.forEach(s => {
+      const opt = STATUS_OPTS.find(x => x.v === s);
+      chips.push({ key: 'status', v: s, l: opt ? opt.l : s });
+    });
+    if (mzSearch) chips.push({ key: 'search', v: mzSearch, l: '«' + mzSearch + '»' });
+    const box = document.getElementById('filterChips');
+    box.innerHTML = chips.map((c, i) =>
+      `<span class="chip"><b title="${esc(c.l)}">${esc(c.l)}</b>` +
+      `<button type="button" data-i="${i}" aria-label="Убрать">×</button></span>`
+    ).join('');
+    box.querySelectorAll('button').forEach(btn => {
+      btn.onclick = () => {
+        const c = chips[+btn.dataset.i];
+        if (!c) return;
+        if (c.key === 'year') mzYears = mzYears.filter(x => x !== c.v);
+        if (c.key === 'customer') mzCustomers = mzCustomers.filter(x => x !== c.v);
+        if (c.key === 'work') mzWorks = mzWorks.filter(x => x !== c.v);
+        if (c.key === 'status') mzStatuses = mzStatuses.filter(x => x !== c.v);
+        if (c.key === 'search') {
+          mzSearch = '';
+          document.getElementById('fltSearch').value = '';
+        }
+        refreshFilters();
+      };
+    });
+    const n = mzFiltered().length;
+    document.getElementById('filterMeta').textContent =
+      n.toLocaleString('ru-RU') + ' из ' + MZ.objects.length.toLocaleString('ru-RU');
+    const clear = document.getElementById('filterClear');
+    const dirty = mzYears.length || mzCustomers.length || mzWorks.length || mzStatuses.length || mzSearch;
+    clear.hidden = !dirty;
+  };
+  function closeMenus(except) {
+    document.querySelectorAll('.filter-menu').forEach(m => {
+      if (m !== except) m.hidden = true;
+    });
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('open'));
+  }
+  function wireDropdown(btnId, menuId) {
+    const btn = document.getElementById(btnId);
+    const menu = document.getElementById(menuId);
+    btn.onclick = e => {
+      e.stopPropagation();
+      const willOpen = menu.hidden;
+      closeMenus();
+      if (willOpen) {
+        menu.hidden = false;
+        btn.classList.add('open');
+      }
+    };
+  }
+  wireDropdown('btnYear', 'menuYear');
+  wireDropdown('btnCustomer', 'menuCustomer');
+  wireDropdown('btnWork', 'menuWork');
+  wireDropdown('btnStatus', 'menuStatus');
+  document.addEventListener('click', () => closeMenus());
+  document.querySelectorAll('.filter-menu').forEach(m => {
+    m.addEventListener('click', e => e.stopPropagation());
   });
 
-  const workSel = document.getElementById('fltWork');
-  const statusSel = document.getElementById('fltStatus');
-  const refresh = () => {
-    mzYears = selectedValues(yearSel);
-    mzCustomers = selectedValues(custSel);
-    mzWorks = selectedValues(workSel);
-    mzStatuses = selectedValues(statusSel);
+  function refreshFilters() {
     mzFocusUin = null;
+    syncMenus();
     renderMzMatrix();
     renderMzTbl();
+  }
+  document.getElementById('filterClear').onclick = () => {
+    mzYears = [];
+    mzCustomers = [];
+    mzWorks = [];
+    mzStatuses = [];
+    mzSearch = '';
+    document.getElementById('fltSearch').value = '';
+    refreshFilters();
   };
-  yearSel.onchange = refresh;
-  custSel.onchange = refresh;
-  workSel.onchange = refresh;
-  statusSel.onchange = refresh;
   let searchTimer = null;
   document.getElementById('fltSearch').oninput = e => {
     clearTimeout(searchTimer);
     const v = e.target.value.trim();
-    searchTimer = setTimeout(() => { mzSearch = v; refresh(); }, 200);
+    searchTimer = setTimeout(() => { mzSearch = v; refreshFilters(); }, 180);
   };
-  refresh();
+  syncMenus();
+  refreshFilters();
 })();
 </script>
 </body>
