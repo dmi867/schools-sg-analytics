@@ -23,7 +23,8 @@ SL_DIR = ROOT / "Simple_List"
 RAW_DIR = ROOT / "data" / "raw"
 OUT = ROOT / "data" / "minstroy_dynamics.json"
 KSG_CANDIDATES = [
-    RAW_DIR / "КСГ+Экспертиза_минстрой.xlsx",
+    RAW_DIR / "КСГ+Экспертиза_минстрой_2910.xlsx",  # свежий срез с сервера (вехи)
+    RAW_DIR / "КСГ+Экспертиза_минстрой.xlsx",  # с заказчиками
     RAW_DIR / "1708_КСГ+Экспертиза.xlsx",
 ]
 
@@ -220,36 +221,40 @@ def ksg_kind(proc: str):
 
 
 def load_ksg_meta(uins: set[str]):
-    """Вехи КСГ (экспертиза/СМР/открытие) и заказчик по УИН."""
-    path = next((p for p in KSG_CANDIDATES if p.exists()), None)
-    if not path:
+    """Вехи КСГ и заказчик: сливаем все доступные выгрузки (свежие вехи + заказчики)."""
+    paths = [p for p in KSG_CANDIDATES if p.exists()]
+    if not paths:
         print("KSG: no file, skip")
         return {}, {}
-    print(f"KSG marks+customer from {path.name} ...", flush=True)
-    wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
-    ws = wb.active
     acc: dict[str, dict] = {}
     customers: dict[str, str] = {}
-    for row in ws.iter_rows(min_row=3, values_only=True):
-        if not row:
-            continue
-        uin = uin_key(row[0])
-        if uin not in uins:
-            continue
-        cust = row[4] if len(row) > 4 else None
-        if cust and uin not in customers:
-            customers[uin] = short_customer(cust)
-        kind = ksg_kind(str(row[6] or ""))
-        if not kind:
-            continue
-        slot = acc.setdefault(uin, {}).setdefault(kind, {"plan": None, "fact": None})
-        fact_end = parse_date(row[8] if len(row) > 8 else None)
-        plan_end = parse_date(row[10] if len(row) > 10 else None)
-        if fact_end and (slot["fact"] is None or fact_end > slot["fact"]):
-            slot["fact"] = fact_end
-        if plan_end and (slot["plan"] is None or plan_end > slot["plan"]):
-            slot["plan"] = plan_end
-    wb.close()
+    for path in paths:
+        print(f"KSG read {path.name} ...", flush=True)
+        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+        ws = wb.active
+        n_rows = 0
+        for row in ws.iter_rows(min_row=3, values_only=True):
+            if not row:
+                continue
+            uin = uin_key(row[0])
+            if uin not in uins:
+                continue
+            n_rows += 1
+            cust = row[4] if len(row) > 4 else None
+            if cust and uin not in customers:
+                customers[uin] = short_customer(cust)
+            kind = ksg_kind(str(row[6] or ""))
+            if not kind:
+                continue
+            slot = acc.setdefault(uin, {}).setdefault(kind, {"plan": None, "fact": None})
+            fact_end = parse_date(row[8] if len(row) > 8 else None)
+            plan_end = parse_date(row[10] if len(row) > 10 else None)
+            if fact_end and (slot["fact"] is None or fact_end > slot["fact"]):
+                slot["fact"] = fact_end
+            if plan_end and (slot["plan"] is None or plan_end > slot["plan"]):
+                slot["plan"] = plan_end
+        wb.close()
+        print(f"  matched rows {n_rows}")
     marks_out = {}
     for uin, kinds in acc.items():
         marks = {}
@@ -261,7 +266,7 @@ def load_ksg_meta(uins: set[str]):
                 marks[key] = {"plan": plan, "fact": fact}
         if marks:
             marks_out[uin] = marks
-    print(f"  marks for {len(marks_out)} UINs, customers {len(customers)}")
+    print(f"KSG total: marks {len(marks_out)} UINs, customers {len(customers)}")
     return marks_out, customers
 
 
