@@ -103,30 +103,101 @@ def short_contractor(c):
     return (c[:40] + "…") if len(c) > 40 else c or None
 
 
-def short_customer(c, nmax=90):
+def _title_ru(s: str) -> str:
+    s = re.sub(r"[A-ZА-ЯЁ]{2,}", lambda m: m.group(0)[0] + m.group(0)[1:].lower(), s or "")
+    return re.sub(r"\s+", " ", s).strip(" ,;«»\"'")
+
+
+def short_customer(c, nmax=72):
+    """Короткие подписи для фильтров: ГКУ МО ДЗКС / ДЕЗ, Администрация «…»."""
     if not c:
         return None
-    c = str(c).strip()
+    raw = str(c).strip()
+    u = raw.upper().replace("Ё", "Е")
+
+    # известные дирекции
+    if "ДИРЕКЦИЯ ЗАКАЗЧИКА КАПИТАЛЬНОГО" in u or u.rstrip(".").endswith("ДЗКС"):
+        return "ГКУ МО ДЗКС"
+    if "ЕДИНОГО ЗАКАЗЧИКА" in u or " ДЕЗ" in f" {u}" or u.rstrip(".").endswith("ДЕЗ"):
+        return "ГКУ МО ДЕЗ"
+
+    # Администрация / Адм. … городского округа X
+    if u.startswith("АДМИНИСТРАЦИЯ") or u.startswith("АДМ."):
+        m = re.search(
+            r"(?:АДМ\.|АДМИНИСТРАЦИЯ)\s+(?:ГОРОДСКОГО\s+ОКРУГА\s+)?(.+?)(?:\s+МОСКОВСКОЙ|\s*,|$)",
+            raw,
+            flags=re.I,
+        )
+        place = _title_ru(m.group(1)) if m else ""
+        place = re.sub(r"\s+городского\s+округа$", "", place, flags=re.I).strip(" ,")
+        # «Одинцовского» → «Одинцовский»
+        place = re.sub(r"ого$", "ий", place, flags=re.I) if place.endswith("ого") else place
+        place = re.sub(r"ого$", "ий", place, flags=re.I) if place.lower().endswith("ого") else place
+        if place.lower().endswith("ого"):
+            place = place[:-3] + "ий"
+        return f"Администрация «{place}»" if place else "Администрация"
+
+    # Упр. культуры администрации г.о. X
+    if u.startswith("УПР.") or u.startswith("УПРАВЛЕНИЕ"):
+        m = re.search(
+            r"(?:городского\s+округа|г\.о\.)\s+([A-ZА-ЯЁa-zа-яё\-]+)",
+            raw,
+            flags=re.I,
+        )
+        place = _title_ru(m.group(1)) if m else ""
+        kind = "культуры" if "КУЛЬТУР" in u else "строительства" if "СТРОИТ" in u else ""
+        if place and kind:
+            return f"Упр. {kind} «{place}»"
+        if place:
+            return f"Управление «{place}»"
+
+    # МКУ / МБУ / ГБУЗ с кавычечным именем
+    quoted = re.search(r'[«"]([^»"]{2,60})[»"]', raw)
+    qname = quoted.group(1).strip() if quoted else None
+
+    if "МУНИЦИПАЛЬНОЕ КАЗЕННОЕ" in u or u.startswith("МКУ"):
+        m = re.search(r"(?:городского\s+округа|г\.о\.)\s+([A-ZА-ЯЁa-zа-яё\-]+)", raw, flags=re.I)
+        place = _title_ru(m.group(1)) if m else ""
+        if place and qname:
+            return f"МКУ {place} «{_title_ru(qname)}»"
+        if place:
+            return f"МКУ {place}"
+        if qname:
+            return f"МКУ «{_title_ru(qname)}»"
+        return "МКУ"
+
+    if "МУНИЦИПАЛЬНОЕ БЮДЖЕТНОЕ" in u or u.startswith("МБУ"):
+        m = re.search(
+            r"([A-ZА-ЯЁa-zа-яё\-]+?)ского\s+городского\s+округа",
+            raw,
+            flags=re.I,
+        )
+        place = _title_ru(m.group(1) + "ский") if m else ""
+        if qname and place:
+            return f"МБУ «{_title_ru(qname)}» ({place})"
+        if qname:
+            return f"МБУ «{_title_ru(qname)}»"
+        return "МБУ"
+
+    if "ЗДРАВООХРАНЕНИЯ" in u or "ГБУЗ" in u:
+        if qname:
+            return f"ГБУЗ «{_title_ru(qname)}»"
+        return "ГБУЗ МО"
+
+    # общий fallback — префиксы + укорочение
+    c = raw
     c = re.sub(
-        r'^ГОСУДАРСТВЕННОЕ КАЗЕННОЕ УЧРЕЖДЕНИЕ МОСКОВСКОЙ ОБЛАСТИ\s*[«"]?',
+        r"^ГОСУДАРСТВЕННОЕ КАЗЕННОЕ УЧРЕЖДЕНИЕ МОСКОВСКОЙ ОБЛАСТИ\s*[«\"]?",
         "ГКУ МО ",
         c,
         flags=re.I,
     )
     c = re.sub(r"^МУНИЦИПАЛЬНОЕ КАЗЕННОЕ УЧРЕЖДЕНИЕ\s*", "МКУ ", c, flags=re.I)
-    c = re.sub(r"^АДМИНИСТРАЦИЯ\s+", "Адм. ", c, flags=re.I)
-    c = re.sub(r"^УПРАВЛЕНИЕ\s+", "Упр. ", c, flags=re.I)
-    c = c.strip(' «»"').rstrip("…").rstrip(".")
-    # канон: ДЗКС без хвоста в кавычках / «...»
-    c = re.sub(
-        r'^(ГКУ МО )\s*[«"]?ДИРЕКЦИЯ ЗАКАЗЧИКА КАПИТАЛЬНОГО СТРОИТЕЛЬСТВА[»"].*$',
-        r"\1ДИРЕКЦИЯ ЗАКАЗЧИКА КАПИТАЛЬНОГО СТРОИТЕЛЬСТВА",
-        c,
-        flags=re.I,
-    )
+    c = re.sub(r"^АДМИНИСТРАЦИЯ\s+", "Администрация ", c, flags=re.I)
+    c = _title_ru(c.strip(' «»"').rstrip("…").rstrip("."))
     if len(c) > nmax:
         cut = c[:nmax].rsplit(" ", 1)[0]
-        c = cut if len(cut) >= nmax // 2 else c[:nmax]
+        c = (cut + "…") if len(cut) >= nmax // 2 else (c[: nmax - 1] + "…")
     return c or None
 
 
