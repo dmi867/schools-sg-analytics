@@ -410,10 +410,11 @@ PAGE_BODY = r"""
           <th>Вид</th>
           <th class="r">Год</th>
           <th>Заказчик</th>
-          <th class="r">Лимит</th><th class="r">Контракт</th>
+          <th class="r" title="млн руб.">Лимит, млн</th>
+          <th class="r" title="млн руб.">Контракт, млн</th>
           <th class="r">СГ</th><th class="r">Оплата</th>
-          <th class="r" title="Согласованная смета после экспертизы, млн">После эксп.</th>
-          <th class="r">Δ сметы</th>
+          <th class="r" title="Согласованная смета после экспертизы, млн руб.">После эксп.</th>
+          <th class="r" title="Изменение сметы, млн руб.">Δ сметы</th>
           <th title="ТЧ — техчасть, СД — смета">Экспертиза</th>
           <th>Статус</th>
         </tr></thead>
@@ -468,11 +469,11 @@ PAGE_BODY = r"""
         <thead><tr>
           <th>Подрядчик</th>
           <th class="r">Объектов</th>
-          <th class="r" title="Сумма лимитов объектов">Лимит, млн</th>
+          <th class="r" title="Сумма лимитов объектов, млн руб.">Лимит, млн</th>
           <th class="r" title="Средняя стройготовность, взвешенная по лимиту">СГ ср., %</th>
           <th class="r" title="Средний % оплаты, взвешенный по лимиту">Оплата ср., %</th>
           <th class="r" title="Число объектов, где СГ заметно выше оплаты (подрядчик кредитует)">Кредитует</th>
-          <th class="r" title="Сумма рублёвого разрыва на объектах с кредитованием">Разрыв, млн</th>
+          <th class="r" title="Сумма рублёвого разрыва на объектах с кредитованием, млн руб.">Разрыв, млн</th>
           <th title="Квадрант относительно порогов СГ и оплаты">Группа</th>
         </tr></thead>
         <tbody id="contrTbl"></tbody>
@@ -508,10 +509,11 @@ PAGE_BODY = r"""
           <th>Вид</th>
           <th class="r">Год</th>
           <th>Заказчик</th>
-          <th class="r">Лимит</th><th class="r">Контракт</th>
+          <th class="r" title="млн руб.">Лимит, млн</th>
+          <th class="r" title="млн руб.">Контракт, млн</th>
           <th class="r">СГ</th><th class="r">Оплата</th>
-          <th class="r" title="После экспертизы, млн">После эксп.</th>
-          <th class="r">Δ сметы</th>
+          <th class="r" title="После экспертизы, млн руб.">После эксп.</th>
+          <th class="r" title="Изменение сметы, млн руб.">Δ сметы</th>
           <th>Экспертиза</th>
           <th>Статус</th>
         </tr></thead>
@@ -709,7 +711,7 @@ function renderMzMatrix() {
         datalabels: { display: false },
         tooltip: { callbacks: { label(ctx) {
           const d = ctx.raw;
-          return `${d.name}: СГ ${d.y}% · оплата ${d.x}% · лимит ${d.limit ?? '—'} · контракт ${d.contract ?? '—'} млн`;
+          return `${d.name}: СГ ${d.y}% · оплата ${d.x}% · лимит ${mlnFmt(d.limit)} · контракт ${mlnFmt(d.contract)} млн`;
         }}},
       },
       scales: {
@@ -786,13 +788,16 @@ function markEvents(marks) {
 
 const FUND_LABEL = { fed:'Федеральный', mo:'Бюджет МО', mun:'Муниципальный', ibk:'ИБК', kik:'КИК' };
 
-function rub(v) {
+/** Сумма в млн руб., всегда с 2 знаками: 1,00 / 70 402,00 */
+function mlnFmt(v, { signed = false } = {}) {
   if (v == null || !isFinite(v)) return '—';
-  const sign = v < 0 ? '−' : '';
-  const a = Math.abs(v);
-  const fmt = (n, d) => n.toLocaleString('ru-RU', { minimumFractionDigits: d, maximumFractionDigits: d });
-  if (a >= 1000) return sign + fmt(a / 1000, 1) + ' млрд';
-  return sign + fmt(a, a >= 100 ? 0 : 1) + ' млн';
+  const n = Number(v);
+  const sign = signed && n > 0 ? '+' : '';
+  return sign + n.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function rub(v) {
+  const s = mlnFmt(v);
+  return s === '—' ? s : s + ' млн';
 }
 function esc(s) {
   return String(s ?? '').replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
@@ -942,11 +947,11 @@ function renderContrTbl(rows) {
     return `<tr class="clickable" data-contractor="${esc(r.contractor)}">` +
       `<td class="obj"><span class="obj-name">${esc(r.contractor)}</span></td>` +
       `<td class="r">${r.n}</td>` +
-      `<td class="r">${r.limit ? Math.round(r.limit) : '—'}</td>` +
+      `<td class="r">${r.limit ? mlnFmt(r.limit) : '—'}</td>` +
       `<td class="r">${r.avg_sg ?? '—'}</td>` +
       `<td class="r">${r.avg_pct ?? '—'}</td>` +
       `<td class="r">${r.n_credit || 0}</td>` +
-      `<td class="r">${r.gap_rub ? rub(r.gap_rub) : '—'}</td>` +
+      `<td class="r">${r.gap_rub ? mlnFmt(r.gap_rub) : '—'}</td>` +
       `<td><span class="pill" style="background:${m.color}22;color:${m.color}">${esc(m.label)}</span></td>` +
       `</tr>`;
   }).join('') || '<tr><td colspan="8" class="note">Нет подрядчиков по фильтру</td></tr>';
@@ -1040,9 +1045,9 @@ function drawMzTraj(uin) {
   const bits = [];
   if (o.exp_agreed_mln != null) {
     const dlt = o.exp_delta_mln != null
-      ? ` (${o.exp_delta_mln>0?'+':''}${o.exp_delta_mln} млн` + (o.exp_overrun!=null ? `, ${o.exp_overrun>0?'+':''}${o.exp_overrun}%` : '') + ')'
+      ? ` (${mlnFmt(o.exp_delta_mln, { signed: true })} млн` + (o.exp_overrun!=null ? `, ${o.exp_overrun>0?'+':''}${o.exp_overrun}%` : '') + ')'
       : '';
-    bits.push(`смета после эксп. ${o.exp_agreed_mln} млн${dlt}`);
+    bits.push(`смета после эксп. ${mlnFmt(o.exp_agreed_mln)} млн${dlt}`);
   }
   if (o.exp_done) bits.push(`эксп. ${o.exp_done}`);
   else if (o.exp_in) bits.push(`заход на эксп. ${o.exp_in}`);
@@ -1137,13 +1142,13 @@ function objectRowHtml(o, { stayOnObjects = false } = {}) {
   const active = o.uin === mzUin ? ' row-active' : '';
   const ovCls = o.exp_overrun > 0 ? 'pos' : (o.exp_overrun < 0 ? 'neg' : '');
   const deltaCell = o.exp_delta_mln != null
-    ? `<div class="cell-stack end"><span class="amt ${ovCls}">${o.exp_delta_mln>0?'+':''}${o.exp_delta_mln}</span>` +
+    ? `<div class="cell-stack end"><span class="amt ${ovCls}">${mlnFmt(o.exp_delta_mln, { signed: true })}</span>` +
       (o.exp_overrun!=null ? `<span class="pct ${ovCls}">${o.exp_overrun>0?'+':''}${o.exp_overrun}%</span>` : '') +
       `</div>`
     : '—';
   const afterExp = o.exp_agreed_mln != null
-    ? `<div class="cell-stack end"><span class="amt">${o.exp_agreed_mln}</span>` +
-      (o.exp_plan_mln != null ? `<span class="pct">план ${o.exp_plan_mln}</span>` : '') +
+    ? `<div class="cell-stack end"><span class="amt">${mlnFmt(o.exp_agreed_mln)}</span>` +
+      (o.exp_plan_mln != null ? `<span class="pct">план ${mlnFmt(o.exp_plan_mln)}</span>` : '') +
       `</div>`
     : '—';
   const workShort = WORK_SHORT[o.bucket] || (o.work || '—');
@@ -1163,8 +1168,8 @@ function objectRowHtml(o, { stayOnObjects = false } = {}) {
     `<td class="work" title="${esc(o.work || '')}">${esc(workShort)}</td>` +
     `<td class="r">${o.open_year??'—'}</td>` +
     `<td class="cust" title="${esc(o.customer || '')}">${esc(o.customer || '—')}</td>` +
-    `<td class="r">${o.limit??'—'}</td>` +
-    `<td class="r">${o.contract_value??'—'}</td>` +
+    `<td class="r">${mlnFmt(o.limit)}</td>` +
+    `<td class="r">${mlnFmt(o.contract_value)}</td>` +
     `<td class="r">${o.sg??'—'}</td><td class="r">${o.pct??'—'}</td>` +
     `<td class="r">${afterExp}</td>` +
     `<td class="r">${deltaCell}</td>` +
