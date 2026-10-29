@@ -282,7 +282,7 @@ EXON_HEAD = r"""<!DOCTYPE html>
       <img class="mo" src="data:image/png;base64,__MO_LOGO__" alt="Московская область">
       <div class="brand-meta">
         <p class="t">Минстрой — СГ и выплаты</p>
-        <p class="s">Портфель Минстроя · СГ и выплаты по Simple List</p>
+        <p class="s" id="brandSub">Стройготовность и оплата · портфель объектов</p>
       </div>
     </div>
     <div class="nav-center">
@@ -299,6 +299,36 @@ EXON_HEAD = r"""<!DOCTYPE html>
 """
 
 PAGE_BODY = r"""
+  <div class="filters">
+    <div class="filter-row" id="filterRow">
+      <div class="filter-dd" data-key="year">
+        <button type="button" class="filter-btn" id="btnYear">Год открытия <span class="caret">▾</span></button>
+        <div class="filter-menu" id="menuYear" hidden></div>
+      </div>
+      <div class="filter-dd" data-key="customer">
+        <button type="button" class="filter-btn" id="btnCustomer">Заказчик <span class="caret">▾</span></button>
+        <div class="filter-menu" id="menuCustomer" hidden></div>
+      </div>
+      <div class="filter-dd" data-key="work">
+        <button type="button" class="filter-btn" id="btnWork">Вид работ <span class="caret">▾</span></button>
+        <div class="filter-menu" id="menuWork" hidden></div>
+      </div>
+      <div class="filter-dd" data-key="status">
+        <button type="button" class="filter-btn" id="btnStatus">Статус <span class="caret">▾</span></button>
+        <div class="filter-menu" id="menuStatus" hidden></div>
+      </div>
+      <div class="filter-search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+        <input id="fltSearch" type="search" placeholder="Поиск по объекту, подрядчику, УИН…" autocomplete="off">
+      </div>
+    </div>
+    <div class="filter-row">
+      <div class="filter-chips" id="filterChips"></div>
+      <span class="filter-meta" id="filterMeta"></span>
+      <button type="button" class="filter-clear" id="filterClear" hidden>Сбросить</button>
+    </div>
+  </div>
+
   <div class="tabpanel stack" data-tab="summary">
   <div class="kpis">
     <div class="kpi"><p class="l">Объектов</p><p class="n" id="mzN">—</p></div>
@@ -310,8 +340,8 @@ PAGE_BODY = r"""
   <div class="card">
     <div class="card-hd">
       <div>
-        <h2>Бюджет</h2>
-        <p id="mzBudgetNote">Лимиты — сколько предусмотрели. Доведено — сколько уже пришло на объекты.</p>
+        <h2>Бюджет по источникам</h2>
+        <p id="mzBudgetNote">Лимиты — предусмотрено. Доведено — уже пришло на объекты (в выбранном срезе).</p>
       </div>
     </div>
     <div class="card-bd"><div class="kpis" id="mzBudget"></div></div>
@@ -345,11 +375,18 @@ PAGE_BODY = r"""
   </div>
 
   <div class="tabpanel stack" data-tab="contractors" hidden>
+  <div class="kpis" id="contrKpis">
+    <div class="kpi"><p class="l">Подрядчиков</p><p class="n" id="cN">—</p></div>
+    <div class="kpi"><p class="l">Кредитуют объекты</p><p class="n warn" id="cCredit">—</p></div>
+    <div class="kpi"><p class="l">Аванс впереди работ</p><p class="n" id="cAdvance">—</p></div>
+    <div class="kpi"><p class="l">Лимит в срезе</p><p class="n" id="cLimit">—</p></div>
+  </div>
+
   <div class="card">
     <div class="card-hd">
       <div>
-        <h2>Квадранты подрядчиков</h2>
-        <p>Ось X — стройготовность, Y — оплата. Размер точки — лимит. Крест — пороги.</p>
+        <h2>Карта подрядчиков</h2>
+        <p>По горизонтали — стройготовность, по вертикали — оплата. Размер точки — лимит. Крест — пороги.</p>
       </div>
     </div>
     <div class="card-bd">
@@ -358,42 +395,36 @@ PAGE_BODY = r"""
         <label>Порог оплаты, % <input type="number" id="qPay" min="0" max="100" step="5" value="50"></label>
       </div>
       <div class="quad-cards" id="quadCards"></div>
-      <div class="chart" style="height:360px"><canvas id="cQuad"></canvas></div>
+      <div class="chart" style="height:400px"><canvas id="cQuad"></canvas></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-hd">
+      <div>
+        <h2>Рейтинг подрядчиков</h2>
+        <p>Сортировка по лимиту. Клик — объекты этого подрядчика</p>
+      </div>
+    </div>
+    <div class="tbl-wrap">
+      <table class="full dense">
+        <thead><tr>
+          <th>Подрядчик</th>
+          <th class="r">Объектов</th>
+          <th class="r">Лимит, млн</th>
+          <th class="r">СГ ср., %</th>
+          <th class="r">Оплата ср., %</th>
+          <th class="r">Кредитует</th>
+          <th class="r">Разрыв, млн</th>
+          <th>Группа</th>
+        </tr></thead>
+        <tbody id="contrTbl"></tbody>
+      </table>
     </div>
   </div>
   </div>
 
   <div class="tabpanel stack" data-tab="objects" hidden>
-  <div class="filters">
-    <div class="filter-row" id="filterRow">
-      <div class="filter-dd" data-key="year">
-        <button type="button" class="filter-btn" id="btnYear">Год открытия <span class="caret">▾</span></button>
-        <div class="filter-menu" id="menuYear" hidden></div>
-      </div>
-      <div class="filter-dd" data-key="customer">
-        <button type="button" class="filter-btn" id="btnCustomer">Заказчик <span class="caret">▾</span></button>
-        <div class="filter-menu" id="menuCustomer" hidden></div>
-      </div>
-      <div class="filter-dd" data-key="work">
-        <button type="button" class="filter-btn" id="btnWork">Вид работ <span class="caret">▾</span></button>
-        <div class="filter-menu" id="menuWork" hidden></div>
-      </div>
-      <div class="filter-dd" data-key="status">
-        <button type="button" class="filter-btn" id="btnStatus">Статус <span class="caret">▾</span></button>
-        <div class="filter-menu" id="menuStatus" hidden></div>
-      </div>
-      <div class="filter-search">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-        <input id="fltSearch" type="search" placeholder="Поиск по объекту, подрядчику, УИН…" autocomplete="off">
-      </div>
-    </div>
-    <div class="filter-row">
-      <div class="filter-chips" id="filterChips"></div>
-      <span class="filter-meta" id="filterMeta"></span>
-      <button type="button" class="filter-clear" id="filterClear" hidden>Сбросить</button>
-    </div>
-  </div>
-
   <div class="card">
     <div class="card-hd">
       <div>
@@ -409,8 +440,8 @@ PAGE_BODY = r"""
   <div class="card">
     <div class="card-hd">
       <div>
-        <h2>Объекты по фильтру</h2>
-        <p>Те же фильтры, что и у матрицы. Клик — траектория ниже</p>
+        <h2>Объекты</h2>
+        <p>По текущему фильтру. Клик — траектория ниже</p>
       </div>
     </div>
     <div class="tbl-wrap">
@@ -708,23 +739,40 @@ function rub(v) {
 function esc(s) {
   return String(s ?? '').replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
 }
-function fundTotals() {
+function median(xs) {
+  if (!xs.length) return null;
+  const a = xs.slice().sort((x, y) => x - y);
+  return Math.round(a[Math.floor(a.length / 2)] * 10) / 10;
+}
+function fundTotals(rows) {
   const acc = {};
-  MZ.objects.forEach(o => (o.funds || []).forEach(f => {
+  rows.forEach(o => (o.funds || []).forEach(f => {
     const s = acc[f.k] || { plan: 0, fact: 0, n: 0 };
     s.plan += f.plan || 0; s.fact += f.fact || 0; s.n += 1;
     acc[f.k] = s;
   }));
   return acc;
 }
+function renderSummaryKpis() {
+  const rows = mzFiltered();
+  const sgs = rows.map(o => o.sg).filter(v => v != null);
+  const pcts = rows.map(o => o.pct).filter(v => v != null);
+  const nCredit = rows.filter(o => o.money_status === 'credit').length;
+  const medSg = median(sgs), medPct = median(pcts);
+  document.getElementById('mzN').textContent = rows.length.toLocaleString('ru-RU');
+  document.getElementById('mzMedSg').textContent = medSg != null ? medSg : '—';
+  document.getElementById('mzMedPct').textContent = medPct != null ? medPct : '—';
+  document.getElementById('mzCredit').textContent = nCredit.toLocaleString('ru-RU');
+}
 function renderPortfolio() {
-  const acc = fundTotals();
+  const rows = mzFiltered();
+  const acc = fundTotals(rows);
   const fed = acc.fed || { plan: 0, fact: 0, n: 0 };
   const mo = acc.mo || { plan: 0, fact: 0, n: 0 };
   const mun = acc.mun || { plan: 0, fact: 0, n: 0 };
   const ibk = acc.ibk || { plan: 0, fact: 0, n: 0 };
   const kik = acc.kik || { plan: 0, fact: 0, n: 0 };
-  const infra = MZ.objects.filter(o => (o.funds || []).some(f => f.k === 'ibk' || f.k === 'kik'));
+  const infra = rows.filter(o => (o.funds || []).some(f => f.k === 'ibk' || f.k === 'kik'));
   const tiles = [
     { l: 'Федеральный', n: fed.n, plan: fed.plan, fact: fed.fact },
     { l: 'Бюджет МО', n: mo.n, plan: mo.plan, fact: mo.fact },
@@ -757,11 +805,18 @@ function quadrantOf(sg, pct) {
 
 function contractorPoints() {
   const byC = new Map();
-  MZ.objects.forEach(o => {
+  mzFiltered().forEach(o => {
     const name = o.contractor || 'Без подрядчика';
-    const e = byC.get(name) || { contractor: name, n: 0, limit: 0, wSg: 0, wPct: 0, w: 0 };
+    const e = byC.get(name) || {
+      contractor: name, n: 0, limit: 0, wSg: 0, wPct: 0, w: 0,
+      n_credit: 0, gap_rub: 0,
+    };
     const w = o.limit || o.contract_value || 0;
     e.n += 1; e.limit += w;
+    if (o.money_status === 'credit') {
+      e.n_credit += 1;
+      e.gap_rub += Math.abs(o.gap_rub || 0);
+    }
     if (o.sg != null && o.pct != null && w > 0) {
       e.wSg += o.sg * w; e.wPct += o.pct * w; e.w += w;
     }
@@ -770,8 +825,12 @@ function contractorPoints() {
   return [...byC.values()].map(e => {
     const avg_sg = e.w ? Math.round(e.wSg / e.w * 10) / 10 : null;
     const avg_pct = e.w ? Math.round(e.wPct / e.w * 10) / 10 : null;
-    return Object.assign(e, { avg_sg, avg_pct, quad: quadrantOf(avg_sg, avg_pct) });
-  });
+    return Object.assign(e, {
+      avg_sg, avg_pct,
+      gap_rub: Math.round(e.gap_rub * 10) / 10,
+      quad: quadrantOf(avg_sg, avg_pct),
+    });
+  }).sort((a, b) => (b.limit || 0) - (a.limit || 0));
 }
 
 const quadCrossPlugin = {
@@ -791,10 +850,48 @@ const quadCrossPlugin = {
   },
 };
 
+function openContractor(name) {
+  if (!name || name === 'Без подрядчика') return;
+  const input = document.getElementById('fltSearch');
+  input.value = name;
+  mzSearch = name;
+  mzFocusUin = null;
+  window.showTab('objects');
+  if (window.refreshFilters) window.refreshFilters();
+}
+function renderContrTbl(rows) {
+  const el = document.getElementById('contrTbl');
+  if (!el) return;
+  const list = rows.filter(r => r.contractor !== 'Без подрядчика');
+  el.innerHTML = list.map(r => {
+    const m = QUAD_META[r.quad] || { label: '—', color: '#94a3b8' };
+    return `<tr class="clickable" data-contractor="${esc(r.contractor)}">` +
+      `<td class="obj"><span class="obj-name">${esc(r.contractor)}</span></td>` +
+      `<td class="r">${r.n}</td>` +
+      `<td class="r">${r.limit ? Math.round(r.limit) : '—'}</td>` +
+      `<td class="r">${r.avg_sg ?? '—'}</td>` +
+      `<td class="r">${r.avg_pct ?? '—'}</td>` +
+      `<td class="r">${r.n_credit || 0}</td>` +
+      `<td class="r">${r.gap_rub ? rub(r.gap_rub) : '—'}</td>` +
+      `<td><span class="pill" style="background:${m.color}22;color:${m.color}">${esc(m.label)}</span></td>` +
+      `</tr>`;
+  }).join('') || '<tr><td colspan="8" class="note">Нет подрядчиков по фильтру</td></tr>';
+  el.querySelectorAll('tr.clickable').forEach(tr => {
+    tr.onclick = () => openContractor(tr.dataset.contractor);
+  });
+}
 function renderQuad() {
   const rows = contractorPoints();
+  const named = rows.filter(r => r.contractor !== 'Без подрядчика');
   const counts = { stable: 0, cashgap: 0, advance: 0, early: 0 };
-  rows.forEach(r => { if (r.quad) counts[r.quad]++; });
+  named.forEach(r => { if (r.quad) counts[r.quad]++; });
+  const nCreditObj = mzFiltered().filter(o => o.money_status === 'credit').length;
+  const limitSum = named.reduce((s, r) => s + (r.limit || 0), 0);
+  document.getElementById('cN').textContent = named.length.toLocaleString('ru-RU');
+  document.getElementById('cCredit').textContent = nCreditObj.toLocaleString('ru-RU');
+  document.getElementById('cAdvance').textContent = (counts.advance || 0).toLocaleString('ru-RU');
+  document.getElementById('cLimit').textContent = rub(limitSum);
+
   document.getElementById('quadCards').innerHTML = Object.keys(QUAD_META).map(k => {
     const m = QUAD_META[k];
     const active = quadState.active === k ? ' active' : '';
@@ -807,13 +904,15 @@ function renderQuad() {
       renderQuad();
     };
   });
-  const visible = quadState.active ? rows.filter(r => r.quad === quadState.active) : rows;
+  renderContrTbl(quadState.active ? named.filter(r => r.quad === quadState.active) : named);
+
+  const visible = quadState.active ? named.filter(r => r.quad === quadState.active) : named;
   const datasets = Object.keys(QUAD_META).map(k => {
     const m = QUAD_META[k];
-    const data = visible.filter(r => r.quad === k).map(r => ({
+    const data = visible.filter(r => r.quad === k && r.avg_sg != null && r.avg_pct != null).map(r => ({
       x: r.avg_sg, y: r.avg_pct,
-      r: Math.max(4, Math.min(16, 3 + Math.sqrt(Math.max(r.limit, 0)) * 0.22)),
-      contractor: r.contractor, limit: r.limit, n: r.n,
+      r: Math.max(5, Math.min(18, 3 + Math.sqrt(Math.max(r.limit, 0)) * 0.22)),
+      contractor: r.contractor, limit: r.limit, n: r.n, n_credit: r.n_credit, gap_rub: r.gap_rub,
     }));
     return { label: m.label, data, backgroundColor: m.color + '99', borderColor: m.color, borderWidth: 1 };
   });
@@ -829,7 +928,12 @@ function renderQuad() {
           callbacks: {
             label(ctx) {
               const d = ctx.raw;
-              return [`${d.contractor}`, `СГ ${d.x}% · оплата ${d.y}%`, `${d.n} объектов · лимит ${rub(d.limit)}`];
+              return [
+                d.contractor,
+                `СГ ${d.x}% · оплата ${d.y}%`,
+                `${d.n} объектов · лимит ${rub(d.limit)}`,
+                d.n_credit ? `кредитует ${d.n_credit} · разрыв ${rub(d.gap_rub)}` : 'без кредитования',
+              ];
             },
           },
         },
@@ -841,14 +945,8 @@ function renderQuad() {
       onClick(evt, els) {
         if (!els.length) return;
         const d = chartQuad.data.datasets[els[0].datasetIndex].data[els[0].index];
-        if (!d || !d.contractor || d.contractor === 'Без подрядчика') return;
-        const input = document.getElementById('fltSearch');
-        input.value = d.contractor;
-        mzSearch = d.contractor;
-        mzFocusUin = null;
-        showTab('objects');
-        renderMzMatrix();
-        renderMzTbl();
+        if (!d || !d.contractor) return;
+        openContractor(d.contractor);
       },
     },
     plugins: [quadCrossPlugin],
@@ -1003,12 +1101,11 @@ function bindObjectRows(rootSel) {
   });
 }
 function renderMzTbl() {
-  const all = MZ.objects.slice().sort((a,b) => (b.sg||0)-(a.sg||0));
   const filtered = mzFiltered().slice().sort((a,b) => (b.sg||0)-(a.sg||0));
   const wrap = document.getElementById('mzTbl')?.closest('.tbl-wrap');
   document.getElementById('mzTbl').innerHTML =
-    all.map(o => objectRowHtml(o)).join('') ||
-    '<tr><td colspan="12" class="note">Нет объектов</td></tr>';
+    filtered.map(o => objectRowHtml(o)).join('') ||
+    '<tr><td colspan="12" class="note">Нет объектов по фильтру</td></tr>';
   if (wrap) wrap.scrollTop = 0;
   bindObjectRows('#mzTbl');
 
@@ -1021,7 +1118,7 @@ function renderMzTbl() {
     if (wrap2) wrap2.scrollTop = 0;
     bindObjectRows('#mzObjTbl');
   }
-  renderFilterChrome();
+  if (window.renderFilterChrome) window.renderFilterChrome();
 }
 
 (function init() {
@@ -1030,9 +1127,11 @@ function renderMzTbl() {
     document.querySelectorAll('.tabpanel').forEach(p => { p.hidden = p.dataset.tab !== tab; });
     const panel = document.querySelector('.tabpanel[data-tab="' + tab + '"]');
     if (panel) panel.getBoundingClientRect();
+    if (tab === 'summary') { renderSummaryKpis(); renderPortfolio(); renderMzTbl(); }
     if (tab === 'contractors') renderQuad();
     if (tab === 'objects') {
       renderMzMatrix();
+      renderMzTbl();
       if (mzUin) drawMzTraj(mzUin);
     }
   }
@@ -1040,11 +1139,11 @@ function renderMzTbl() {
   document.querySelectorAll('.nav-tab').forEach(b => { b.onclick = () => showTab(b.dataset.tab); });
 
   const m = MZ.meta || {};
-  document.getElementById('mzN').textContent = (m.n || MZ.objects.length).toLocaleString('ru-RU');
-  document.getElementById('mzMedSg').textContent = m.median_sg != null ? m.median_sg : '—';
-  document.getElementById('mzMedPct').textContent = m.median_pct != null ? m.median_pct : '—';
-  document.getElementById('mzCredit').textContent = m.n_credit != null ? m.n_credit : '—';
-  renderPortfolio();
+  const asOf = m.as_of ? m.as_of.split('-').reverse().join('.') : '';
+  const sub = document.getElementById('brandSub');
+  if (sub) {
+    sub.textContent = (asOf ? 'Данные на ' + asOf + ' · ' : '') + 'СГ и оплата по портфелю Минстроя';
+  }
   const onThresh = (id, key) => {
     const el = document.getElementById(id);
     const apply = () => {
@@ -1200,9 +1299,14 @@ function renderMzTbl() {
   function refreshFilters() {
     mzFocusUin = null;
     syncMenus();
+    renderSummaryKpis();
+    renderPortfolio();
     renderMzMatrix();
     renderMzTbl();
+    const activeTab = document.querySelector('.nav-tab.active')?.dataset.tab;
+    if (activeTab === 'contractors') renderQuad();
   }
+  window.refreshFilters = refreshFilters;
   document.getElementById('filterClear').onclick = () => {
     mzYears = [];
     mzCustomers = [];
