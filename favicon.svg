@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="ЦКС">
+  <rect width="32" height="32" rx="7" fill="#11405f"/>
+  <g transform="translate(3.5 4) scale(0.21)">
+    <path
+      fill="#f4f8fb"
+      d="M18.5033 13H0.503296L1.0033 88.5L52.5033 133.5L91.0033 101.5L79.5033 90L52.5033 112.5L18.5033 83V13Z"
+    />
+    <path
+      fill="#1f8682"
+      d="M57.5033 13H41.5033V82H57.5033V70L68.5033 59L114.503 105V83L79.5033 47.5L113.503 13H92.5033L59.5033 45H57.5033V13Z"
+    />
+  </g>
+</svg>
