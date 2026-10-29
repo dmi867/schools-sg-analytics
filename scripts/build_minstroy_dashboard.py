@@ -229,26 +229,60 @@ EXON_HEAD = r"""<!DOCTYPE html>
     font: inherit; height: 36px; padding: 0 .75rem; min-width: 260px; max-width: 100%;
     border: 1px solid hsl(var(--border)); border-radius: .5rem; background: #fff;
   }
-  .tbl-wrap { max-height: 640px; overflow: auto }
-  table.full { width: 100%; min-width: 1180px; border-collapse: collapse; font-size: .8125rem }
-  table.full th, table.full td { padding: .7rem .85rem; border-bottom: 1px solid hsl(var(--border)); text-align: left; vertical-align: top }
+  .tbl-wrap { max-height: 640px; overflow: auto; border-radius: 0 0 .5rem .5rem }
+  table.full {
+    width: max-content; min-width: 100%; border-collapse: separate; border-spacing: 0;
+    font-size: .78rem; table-layout: auto;
+  }
+  table.full th, table.full td {
+    padding: .55rem .65rem; border-bottom: 1px solid hsl(var(--border));
+    text-align: left; vertical-align: middle; background: #fff;
+  }
   table.full th {
-    position: sticky; top: 0; z-index: 2; background: hsl(var(--background));
-    color: hsl(var(--muted-foreground)); font-size: .6875rem; font-weight: 600;
-    letter-spacing: .04em; text-transform: uppercase; white-space: nowrap;
+    position: sticky; top: 0; z-index: 3; background: hsl(var(--background));
+    color: hsl(var(--muted-foreground)); font-size: .65rem; font-weight: 600;
+    letter-spacing: .03em; text-transform: uppercase; white-space: nowrap;
     box-shadow: 0 1px 0 hsl(var(--border));
   }
   table.full td.r, table.full th.r { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap }
-  table.dense .obj { min-width: 22rem; max-width: 36rem }
-  table.dense .obj-name { display: block; font-weight: 600; line-height: 1.4; overflow-wrap: break-word }
-  table.dense .obj-sub { display: block; margin-top: .35rem; font-size: .8rem; color: hsl(var(--muted-foreground)); line-height: 1.35 }
-  table.dense .obj-uin { display: block; margin-top: .2rem; font-size: .7rem; color: hsl(var(--muted-foreground)); font-variant-numeric: tabular-nums }
-  table.dense .work { white-space: normal; min-width: 8.5rem }
-  table.dense .cell-stack { display: flex; flex-direction: column; align-items: flex-end; gap: 2px }
+  /* Название объекта — широкая липкая колонка, без сжатия */
+  table.dense th.obj, table.dense td.obj {
+    position: sticky; left: 0; z-index: 2;
+    min-width: 22rem; width: 22rem; max-width: 28rem;
+    box-shadow: 1px 0 0 hsl(var(--border));
+  }
+  table.dense th.obj { z-index: 4; background: hsl(var(--background)) }
+  table.dense td.obj { background: #fff }
+  tr.clickable:hover td.obj, tr.row-active td.obj { background: hsl(var(--muted)) }
+  tr.row-active td.obj { background: rgba(31,134,130,.08) }
+  table.dense .obj-name {
+    display: block; font-weight: 600; line-height: 1.35;
+    white-space: normal; overflow-wrap: anywhere; hyphens: auto;
+  }
+  table.dense .obj-sub {
+    display: block; margin-top: .2rem; font-size: .72rem;
+    color: hsl(var(--muted-foreground)); line-height: 1.3;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  table.dense .obj-uin {
+    display: block; margin-top: .15rem; font-size: .65rem;
+    color: hsl(var(--muted-foreground)); font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  table.dense .work {
+    white-space: nowrap; max-width: 9rem;
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  table.dense .cust {
+    white-space: nowrap; max-width: 11rem;
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  table.dense .exp-cell { white-space: nowrap; min-width: 7.5rem }
+  table.dense .cell-stack { display: flex; flex-direction: column; align-items: flex-end; gap: 1px }
   table.dense .cell-stack.start { align-items: flex-start }
-  table.dense .exp-date { font-size: .7rem; color: hsl(var(--muted-foreground)); font-variant-numeric: tabular-nums }
+  table.dense .exp-date { font-size: .68rem; color: hsl(var(--muted-foreground)); font-variant-numeric: tabular-nums; white-space: nowrap }
   table.dense .amt { font-weight: 600 }
-  table.dense .pct { font-size: .7rem; color: hsl(var(--muted-foreground)) }
+  table.dense .pct { font-size: .68rem; color: hsl(var(--muted-foreground)) }
   .amt.neg, .pct.neg { color: var(--err) }
   .amt.pos, .pct.pos { color: var(--ok) }
   tr.clickable { cursor: pointer }
@@ -357,13 +391,13 @@ PAGE_BODY = r"""
     <div class="tbl-wrap">
       <table class="full dense">
         <thead><tr>
-          <th>Объект</th>
-          <th>Вид работ</th>
-          <th class="r">Год откр.</th>
+          <th class="obj">Объект</th>
+          <th>Вид</th>
+          <th class="r">Год</th>
           <th>Заказчик</th>
-          <th class="r">Лимит, млн</th><th class="r">Контракт, млн</th>
-          <th class="r">СГ, %</th><th class="r">Оплата, %</th>
-          <th class="r" title="Согласованная смета после экспертизы">После экспертизы, млн</th>
+          <th class="r">Лимит</th><th class="r">Контракт</th>
+          <th class="r">СГ</th><th class="r">Оплата</th>
+          <th class="r" title="Согласованная смета после экспертизы, млн">После эксп.</th>
           <th class="r">Δ сметы</th>
           <th title="ТЧ — техчасть, СД — смета">Экспертиза</th>
           <th>Статус</th>
@@ -447,13 +481,13 @@ PAGE_BODY = r"""
     <div class="tbl-wrap">
       <table class="full dense">
         <thead><tr>
-          <th>Объект</th>
-          <th>Вид работ</th>
-          <th class="r">Год откр.</th>
+          <th class="obj">Объект</th>
+          <th>Вид</th>
+          <th class="r">Год</th>
           <th>Заказчик</th>
-          <th class="r">Лимит, млн</th><th class="r">Контракт, млн</th>
-          <th class="r">СГ, %</th><th class="r">Оплата, %</th>
-          <th class="r">После экспертизы, млн</th>
+          <th class="r">Лимит</th><th class="r">Контракт</th>
+          <th class="r">СГ</th><th class="r">Оплата</th>
+          <th class="r" title="После экспертизы, млн">После эксп.</th>
           <th class="r">Δ сметы</th>
           <th>Экспертиза</th>
           <th>Статус</th>
@@ -583,24 +617,25 @@ function mzPass(o) {
 }
 function expCellHtml(o) {
   const kind = EXP_KIND[o.exp_kind];
+  const tip = [
+    kind ? kind.tip : '',
+    o.exp_done ? 'завершена ' + o.exp_done : '',
+    o.exp_start ? 'старт ' + o.exp_start : '',
+    o.exp_in ? 'заход ' + o.exp_in : '',
+  ].filter(Boolean).join(' · ');
   const bits = [];
-  if (kind) {
-    bits.push(`<span class="pill ${kind.c}" title="${esc(kind.tip)}">${kind.l}</span>`);
-  }
+  if (kind) bits.push(`<span class="pill ${kind.c}">${kind.l}</span>`);
   if (o.exp_done) {
-    bits.push(`<span class="exp-date">завершена ${esc(o.exp_done)}</span>`);
-    if (o.exp_start) bits.push(`<span class="exp-date">старт ${esc(o.exp_start)}</span>`);
-    else if (o.exp_in) bits.push(`<span class="exp-date">заход ${esc(o.exp_in)}</span>`);
+    bits.push(`<span class="exp-date">${esc(o.exp_done)}</span>`);
   } else if (o.exp_in || o.exp_start) {
-    bits.push(`<span class="pill warn">в экспертизе</span>`);
-    if (o.exp_start) bits.push(`<span class="exp-date">старт ${esc(o.exp_start)}</span>`);
-    if (o.exp_in) bits.push(`<span class="exp-date">заход ${esc(o.exp_in)}</span>`);
+    bits.push(`<span class="pill warn">в эксп.</span>`);
+    bits.push(`<span class="exp-date">${esc(o.exp_start || o.exp_in)}</span>`);
   } else if (o.entered_exp) {
     bits.push(`<span class="pill warn">заявка</span>`);
   } else if (!kind) {
-    return '<span class="muted">нет данных</span>';
+    return '<span class="muted">—</span>';
   }
-  return `<div class="cell-stack start">${bits.join('')}</div>`;
+  return `<div class="cell-stack start exp-cell" title="${esc(tip)}">${bits.join('')}</div>`;
 }
 function toggleIn(arr, v) {
   const i = arr.indexOf(v);
@@ -1051,6 +1086,12 @@ function drawMzTraj(uin) {
   chartMzTraj = new Chart(document.getElementById('cMzTraj'), cfg);
 }
 
+const WORK_SHORT = {
+  капремонт: 'Капремонт',
+  строительство: 'Строительство',
+  реконструкция: 'Реконструкция',
+  прочее: 'Прочее',
+};
 function objectRowHtml(o, { stayOnObjects = false } = {}) {
   const active = o.uin === mzUin ? ' row-active' : '';
   const ovCls = o.exp_overrun > 0 ? 'pos' : (o.exp_overrun < 0 ? 'neg' : '');
@@ -1064,23 +1105,29 @@ function objectRowHtml(o, { stayOnObjects = false } = {}) {
       (o.exp_plan_mln != null ? `<span class="pct">план ${o.exp_plan_mln}</span>` : '') +
       `</div>`
     : '—';
-  const riskTip = o.risk ? ` title="${esc(o.risk)}"` : '';
+  const workShort = WORK_SHORT[o.bucket] || (o.work || '—');
+  const tipBits = [
+    o.full || o.name,
+    o.work,
+    o.customer,
+    o.ownership,
+    o.contractor ? 'подрядчик: ' + o.contractor : '',
+  ].filter(Boolean).join('\n');
   return `<tr class="clickable${active}" data-uin="${o.uin}" data-stay="${stayOnObjects ? '1' : '0'}">` +
-    `<td class="obj"${riskTip}>` +
+    `<td class="obj" title="${esc(tipBits)}">` +
       `<span class="obj-name">${esc(o.full || o.name)}</span>` +
-      (o.contractor ? `<span class="obj-sub">подрядчик · ${esc(o.contractor)}</span>` : '') +
-      (o.ownership ? `<span class="obj-sub">${esc(o.ownership)}</span>` : '') +
+      (o.contractor ? `<span class="obj-sub" title="${esc(o.contractor)}">${esc(o.contractor)}</span>` : '') +
       `<span class="obj-uin">${esc(o.uin)}</span>` +
     `</td>` +
-    `<td class="work">${esc(o.work || '—')}</td>` +
+    `<td class="work" title="${esc(o.work || '')}">${esc(workShort)}</td>` +
     `<td class="r">${o.open_year??'—'}</td>` +
-    `<td class="work">${esc(o.customer || '—')}</td>` +
+    `<td class="cust" title="${esc(o.customer || '')}">${esc(o.customer || '—')}</td>` +
     `<td class="r">${o.limit??'—'}</td>` +
     `<td class="r">${o.contract_value??'—'}</td>` +
     `<td class="r">${o.sg??'—'}</td><td class="r">${o.pct??'—'}</td>` +
     `<td class="r">${afterExp}</td>` +
     `<td class="r">${deltaCell}</td>` +
-    `<td>${expCellHtml(o)}</td>` +
+    `<td class="exp-cell">${expCellHtml(o)}</td>` +
     `<td><span class="pill ${STATUS_PILL[o.money_status]||''}">${STATUS_SHORT[o.money_status]||'—'}</span></td></tr>`;
 }
 function bindObjectRows(rootSel) {
