@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import re
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime
 from pathlib import Path
 
@@ -24,7 +24,7 @@ RAW_DIR = ROOT / "data" / "raw"
 OUT = ROOT / "data" / "minstroy_dynamics.json"
 KSG_CANDIDATES = [
     RAW_DIR / "КСГ+Экспертиза_минстрой_2910.xlsx",  # свежий срез с сервера (вехи)
-    RAW_DIR / "КСГ+Экспертиза_минстрой.xlsx",  # с заказчиками
+    RAW_DIR / "КСГ+Экспертиза_минстрой.xlsx",
     RAW_DIR / "1708_КСГ+Экспертиза.xlsx",
 ]
 
@@ -115,10 +115,10 @@ def short_customer(c, nmax=72):
     raw = str(c).strip()
     u = raw.upper().replace("Ё", "Е")
 
-    # известные дирекции
-    if "ДИРЕКЦИЯ ЗАКАЗЧИКА КАПИТАЛЬНОГО" in u or u.rstrip(".").endswith("ДЗКС"):
+    # известные дирекции (как в kt: колонка «Предмет контракта» = заказчик)
+    if "ДЗКС" in u or "ДИРЕКЦИЯ ЗАКАЗЧИКА КАПИТАЛЬНОГО" in u:
         return "ГКУ МО ДЗКС"
-    if "ЕДИНОГО ЗАКАЗЧИКА" in u or " ДЕЗ" in f" {u}" or u.rstrip(".").endswith("ДЕЗ"):
+    if "ДЕЗ" in u or "ЕДИНОГО ЗАКАЗЧИКА" in u:
         return "ГКУ МО ДЕЗ"
 
     # Администрация / Адм. … городского округа X
@@ -292,13 +292,12 @@ def ksg_kind(proc: str):
 
 
 def load_ksg_meta(uins: set[str]):
-    """Вехи КСГ и заказчик: сливаем все доступные выгрузки (свежие вехи + заказчики)."""
+    """Вехи КСГ: сливаем все доступные выгрузки (заказчик — из Simple List / ККП)."""
     paths = [p for p in KSG_CANDIDATES if p.exists()]
     if not paths:
         print("KSG: no file, skip")
-        return {}, {}
+        return {}
     acc: dict[str, dict] = {}
-    customers: dict[str, str] = {}
     for path in paths:
         print(f"KSG read {path.name} ...", flush=True)
         wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
@@ -311,9 +310,6 @@ def load_ksg_meta(uins: set[str]):
             if uin not in uins:
                 continue
             n_rows += 1
-            cust = row[4] if len(row) > 4 else None
-            if cust and uin not in customers:
-                customers[uin] = short_customer(cust)
             kind = ksg_kind(str(row[6] or ""))
             if not kind:
                 continue
@@ -337,8 +333,8 @@ def load_ksg_meta(uins: set[str]):
                 marks[key] = {"plan": plan, "fact": fact}
         if marks:
             marks_out[uin] = marks
-    print(f"KSG total: marks {len(marks_out)} UINs, customers {len(customers)}")
-    return marks_out, customers
+    print(f"KSG total: marks {len(marks_out)} UINs")
+    return marks_out
 
 
 def load_funding(path: Path, uins: set[str]):
@@ -449,6 +445,8 @@ def load_file(path: Path, d):
     i_egrz = c("Номер заключения экспертизы")
     i_open_year = c("Год открытия")
     i_ownership = c("Собственность")
+    # В Акценте «Предмет контракта» = организация-заказчик (как в kt / ККП)
+    i_subject = c("Предмет контракта")
     if i_uin is None or i_grbs is None:
         wb.close()
         return {}
@@ -485,6 +483,7 @@ def load_file(path: Path, d):
         egrz = None
         open_year = None
         ownership = None
+        subjects: list[str] = []
         # контракты по Р/Н (или anon), берём max nmck на rn
         contracts: dict = {}
         for row in rows:
@@ -492,6 +491,10 @@ def load_file(path: Path, d):
                 name = row[i_name]
             if i_work is not None and row[i_work]:
                 work = str(row[i_work]).strip()
+            if i_subject is not None and row[i_subject]:
+                subj = str(row[i_subject]).strip()
+                if subj:
+                    subjects.append(subj)
             v_sg = fnum(row[i_sg]) if i_sg is not None else None
             if v_sg is not None:
                 sg = v_sg
@@ -563,6 +566,9 @@ def load_file(path: Path, d):
         else:
             paid = adv = nmck = ctr = status = None
 
+        # заказчик = самый частый «Предмет контракта» (как customer_of в kt)
+        customer = short_customer(Counter(subjects).most_common(1)[0][0]) if subjects else None
+
         best[uin] = {
             "d": d,
             "sg": sg,
@@ -574,6 +580,7 @@ def load_file(path: Path, d):
             "name": name,
             "work": work,
             "contractor": ctr,
+            "customer": customer,
             "status": status,
             "exp_plan": exp_plan,
             "exp_agreed": exp_agreed,
@@ -625,7 +632,7 @@ def main():
         uin for uin, pts in series.items() if max(p["d"] for p in pts) == last_date
     }
     funding = load_funding(last_file, portfolio_uins)
-    ksg, customers = load_ksg_meta(portfolio_uins)
+    ksg = load_ksg_meta(portfolio_uins)
 
     objects = []
     for uin, pts in series.items():
@@ -645,6 +652,8 @@ def main():
         egrz = last.get("egrz")
         open_year = last.get("open_year")
         ownership = last.get("ownership")
+        # заказчик — только с последнего среза Simple List (как ККП в kt)
+        customer = last.get("customer")
         # протянуть nmck/лимит/экспертизу назад, если в ранних срезах пусто
         for p in pts:
             if (p.get("nmck") or 0) > 0:
@@ -715,7 +724,7 @@ def main():
                 "work": last["work"] or "—",
                 "bucket": work_bucket(last["work"]),
                 "contractor": short_contractor(last["contractor"]),
-                "customer": customers.get(uin),
+                "customer": customer,
                 "ownership": ownership,
                 "open_year": open_year,
                 "status": last["status"],
