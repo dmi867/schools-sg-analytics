@@ -139,17 +139,24 @@
   }
   .filter-menu {
     position: absolute; top: calc(100% + 4px); left: 0; z-index: 40;
-    min-width: 220px; max-width: min(360px, 90vw); max-height: 280px; overflow: auto;
+    min-width: 260px; width: max-content; max-width: min(440px, 92vw); max-height: 320px; overflow: auto;
     background: #fff; border: 1px solid hsl(var(--border)); border-radius: .5rem;
-    box-shadow: 0 10px 28px rgb(15 23 42 / .12); padding: .35rem;
+    box-shadow: 0 10px 28px rgb(15 23 42 / .12); padding: .4rem;
+  }
+  .filter-dd[data-key="customer"] .filter-menu {
+    min-width: 360px; max-width: min(520px, 94vw);
   }
   .filter-menu label {
-    display: flex; align-items: flex-start; gap: .5rem;
-    padding: .45rem .55rem; border-radius: .35rem; cursor: pointer;
-    font-size: .8125rem; line-height: 1.3; color: hsl(var(--foreground));
+    display: flex; align-items: flex-start; gap: .55rem;
+    padding: .5rem .6rem; border-radius: .4rem; cursor: pointer;
+    font-size: .8125rem; line-height: 1.35; color: hsl(var(--foreground));
   }
   .filter-menu label:hover { background: hsl(var(--muted)) }
-  .filter-menu input { margin-top: .15rem; accent-color: var(--teal); flex-shrink: 0 }
+  .filter-menu label span {
+    flex: 1; min-width: 12rem; white-space: normal; overflow-wrap: break-word;
+    word-break: normal; hyphens: none; text-transform: none;
+  }
+  .filter-menu input { margin-top: .2rem; accent-color: var(--teal); flex-shrink: 0; width: 15px; height: 15px }
   .filter-search {
     display: flex; align-items: center; gap: .5rem;
     flex: 1; min-width: 180px; height: 36px; padding: 0 .75rem;
@@ -1188,19 +1195,40 @@ function renderMzTbl() {
   sel.onchange = e => mzSelectObject(e.target.value, { focus: true });
 
   const years = [...new Set(MZ.objects.map(o => o.open_year).filter(Boolean))].sort();
-  const customers = [...new Set(MZ.objects.map(o => o.customer).filter(Boolean))]
-    .sort((a, b) => a.localeCompare(b, 'ru'));
+
+  function prettyCust(s) {
+    return String(s || '')
+      .replace(/[A-ZА-ЯЁ]{2,}/g, w => w[0] + w.slice(1).toLowerCase())
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+  function customersForSelectedYears() {
+    const rows = MZ.objects.filter(o => {
+      if (!o.customer) return false;
+      if (!mzYears.length) return true;
+      return mzYears.includes(String(o.open_year || ''));
+    });
+    return [...new Set(rows.map(o => o.customer))]
+      .sort((a, b) => prettyCust(a).localeCompare(prettyCust(b), 'ru'));
+  }
 
   function fillCheckMenu(menu, opts, selected, onToggle) {
+    if (!opts.length) {
+      menu.innerHTML = '<div style="padding:.65rem .7rem;font-size:.78rem;color:hsl(var(--muted-foreground))">Нет вариантов</div>';
+      return;
+    }
     menu.innerHTML = opts.map(o => {
       const checked = selected.includes(o.v) ? ' checked' : '';
-      return `<label><input type="checkbox" value="${esc(o.v)}"${checked}><span>${esc(o.l)}</span></label>`;
+      return `<label><input type="checkbox" value="${esc(o.v)}"${checked}><span title="${esc(o.l)}">${esc(o.l)}</span></label>`;
     }).join('');
     menu.querySelectorAll('input').forEach(inp => {
       inp.onchange = () => { onToggle(inp.value); refreshFilters(); };
     });
   }
   function syncMenus() {
+    const custOpts = customersForSelectedYears();
+    const avail = new Set(custOpts);
+    mzCustomers = mzCustomers.filter(c => avail.has(c));
     fillCheckMenu(
       document.getElementById('menuYear'),
       years.map(y => ({ v: y, l: y })),
@@ -1209,7 +1237,7 @@ function renderMzTbl() {
     );
     fillCheckMenu(
       document.getElementById('menuCustomer'),
-      customers.map(c => ({ v: c, l: c })),
+      custOpts.map(c => ({ v: c, l: prettyCust(c) })),
       mzCustomers,
       v => { mzCustomers = toggleIn(mzCustomers.slice(), v); }
     );
@@ -1251,7 +1279,7 @@ function renderMzTbl() {
     });
     const chips = [];
     mzYears.forEach(y => chips.push({ key: 'year', v: y, l: 'Год ' + y }));
-    mzCustomers.forEach(c => chips.push({ key: 'customer', v: c, l: c }));
+    mzCustomers.forEach(c => chips.push({ key: 'customer', v: c, l: prettyCust(c) }));
     mzWorks.forEach(w => {
       const opt = WORK_OPTS.find(x => x.v === w);
       chips.push({ key: 'work', v: w, l: opt ? opt.l : w });
