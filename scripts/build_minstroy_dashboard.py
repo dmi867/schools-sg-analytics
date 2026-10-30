@@ -18,11 +18,6 @@ DATA = ROOT / "data" / "minstroy_dynamics.json"
 OUT_HTML = ROOT / "dashboard.html"
 CKS_LOGO_B64 = base64.b64encode((ROOT / "assets" / "cks-logo.png").read_bytes()).decode("ascii")
 MO_LOGO_B64 = base64.b64encode((ROOT / "assets" / "logo-mo.png").read_bytes()).decode("ascii")
-FAVICON_SVG = (ROOT / "assets" / "favicon.svg").read_text(encoding="utf-8")
-FAVICON_SVG_HREF = "data:image/svg+xml;base64," + base64.b64encode(FAVICON_SVG.encode("utf-8")).decode("ascii")
-FAVICON_ICO_HREF = "data:image/x-icon;base64," + base64.b64encode(
-    (ROOT / "assets" / "favicon.ico").read_bytes()
-).decode("ascii")
 
 
 # Дизайн 1:1 с Exon_2 Header + Index (glass-nav, Inter, soft cards, select+search).
@@ -32,8 +27,7 @@ EXON_HEAD = r"""<!DOCTYPE html>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Минстрой — СГ и выплаты</title>
-<link rel="icon" href="__FAVICON_SVG__" type="image/svg+xml" />
-<link rel="alternate icon" href="__FAVICON_ICO__" type="image/x-icon" />
+<link rel="icon" type="image/x-icon" href="/favicon.ico" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -1616,10 +1610,7 @@ def main():
     n = len(payload.get("objects") or [])
     meta = payload.get("meta") or {}
     html = (
-        EXON_HEAD.replace("__CKS_LOGO__", CKS_LOGO_B64)
-        .replace("__MO_LOGO__", MO_LOGO_B64)
-        .replace("__FAVICON_SVG__", FAVICON_SVG_HREF)
-        .replace("__FAVICON_ICO__", FAVICON_ICO_HREF)
+        EXON_HEAD.replace("__CKS_LOGO__", CKS_LOGO_B64).replace("__MO_LOGO__", MO_LOGO_B64)
         + PAGE_BODY
         + PAGE_SCRIPT.replace("__DATA__", json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
     )
