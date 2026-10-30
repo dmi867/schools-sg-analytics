@@ -199,10 +199,51 @@
   }
   .card-hd h2 { margin: 0; font-size: 1rem; font-weight: 600 }
   .card-hd p { margin: .15rem 0 0; font-size: .75rem; color: hsl(var(--muted-foreground)) }
+  .card-hd .hd-actions { display: flex; align-items: center; gap: .35rem; flex-shrink: 0 }
   .card-bd { padding: 1rem 1.25rem }
   .chart { position: relative; height: 280px }
   .chart.tall { height: 480px }
+  /* Матрица: крупнее по умолчанию, тянется с экраном (MacBook → большой монитор) */
+  .chart.matrix {
+    height: clamp(440px, 58vh, 720px);
+  }
+  @media (min-width: 1440px) {
+    .chart.matrix { height: clamp(520px, 62vh, 880px); }
+  }
+  @media (min-width: 1920px) {
+    .chart.matrix { height: clamp(600px, 68vh, 1040px); }
+  }
   .chart.traj { height: 340px }
+  .btn-fs {
+    display: inline-flex; align-items: center; justify-content: center;
+    height: 32px; width: 32px; border-radius: .5rem; flex-shrink: 0;
+    border: 1px solid hsl(var(--border)); background: #fff; color: hsl(var(--foreground));
+    cursor: pointer; transition: background .15s, border-color .15s;
+  }
+  .btn-fs:hover { background: hsl(var(--muted)) }
+  .btn-fs svg { width: 16px; height: 16px }
+  /* Раскрытие матрицы на весь экран (не native Fullscreen — стабильнее на Mac/TV) */
+  .card.matrix-card.is-fs {
+    position: fixed; inset: 0; z-index: 200;
+    margin: 0; border-radius: 0; border: none;
+    display: flex; flex-direction: column;
+    background: #fff;
+    box-shadow: none;
+  }
+  .card.matrix-card.is-fs .card-hd {
+    flex-shrink: 0;
+    padding: .85rem clamp(1rem, 2vw, 2rem);
+    background: hsl(var(--background));
+  }
+  .card.matrix-card.is-fs .card-bd {
+    flex: 1; min-height: 0; display: flex; flex-direction: column;
+    padding: .75rem clamp(1rem, 2vw, 2rem) 1.25rem;
+  }
+  .card.matrix-card.is-fs .chart.matrix {
+    flex: 1; height: auto !important; min-height: 0;
+  }
+  body.matrix-fs-open { overflow: hidden }
+  body.matrix-fs-open .glass-nav { visibility: hidden }
   .marks { display: flex; flex-wrap: wrap; gap: .35rem 1rem; margin: 0 0 .65rem; font-size: .75rem; color: hsl(var(--muted-foreground)) }
   .marks .mi { display: inline-flex; align-items: center; gap: .35rem }
   .marks b { font-weight: 600; color: hsl(var(--foreground)) }
@@ -485,15 +526,21 @@
   </div>
 
   <div class="tabpanel stack" data-tab="objects" hidden>
-  <div class="card">
+  <div class="card matrix-card" id="matrixCard">
     <div class="card-hd">
       <div>
         <h2>Матрица риска: готовность vs оплата</h2>
         <p id="mzMatrixNote">Снизу оплата, слева СГ. Зелёная полоса — коридор ±10 п.п. Клик по точке — только этот объект; клик по фону — снять фокус.</p>
       </div>
+      <div class="hd-actions">
+        <button type="button" class="btn-fs" id="btnMatrixFs" title="На весь экран" aria-label="На весь экран">
+          <svg id="iconFsEnter" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></svg>
+          <svg id="iconFsExit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" hidden><path d="M3 8h5V3M16 3v5h5M3 16h5v5M16 21v-5h5"/></svg>
+        </button>
+      </div>
     </div>
     <div class="card-bd">
-      <div class="chart tall"><canvas id="cMzMatrix"></canvas></div>
+      <div class="chart matrix" id="mzMatrixBox"><canvas id="cMzMatrix"></canvas></div>
     </div>
   </div>
 
@@ -775,6 +822,30 @@ function renderMzMatrix() {
   };
   if (chartMzMatrix) chartMzMatrix.destroy();
   chartMzMatrix = new Chart(document.getElementById('cMzMatrix'), cfg);
+  requestAnimationFrame(() => { try { chartMzMatrix.resize(); } catch (e) {} });
+}
+
+function setMatrixFullscreen(on) {
+  const card = document.getElementById('matrixCard');
+  const btn = document.getElementById('btnMatrixFs');
+  const enter = document.getElementById('iconFsEnter');
+  const exit = document.getElementById('iconFsExit');
+  if (!card) return;
+  card.classList.toggle('is-fs', !!on);
+  document.body.classList.toggle('matrix-fs-open', !!on);
+  if (btn) {
+    btn.title = on ? 'Свернуть' : 'На весь экран';
+    btn.setAttribute('aria-label', btn.title);
+  }
+  if (enter) enter.hidden = !!on;
+  if (exit) exit.hidden = !on;
+  requestAnimationFrame(() => {
+    try { if (chartMzMatrix) chartMzMatrix.resize(); } catch (e) {}
+  });
+}
+function toggleMatrixFullscreen() {
+  const card = document.getElementById('matrixCard');
+  setMatrixFullscreen(!(card && card.classList.contains('is-fs')));
 }
 
 function parseMzDate(s) {
@@ -1293,6 +1364,8 @@ function renderMzTbl() {
       renderMzMatrix();
       renderMzTbl();
       if (mzUin) drawMzTraj(mzUin);
+    } else {
+      setMatrixFullscreen(false);
     }
   }
   window.showTab = showTab;
@@ -1315,6 +1388,21 @@ function renderMzTbl() {
   };
   onThresh('qSg', 'sg');
   onThresh('qPay', 'pay');
+
+  document.getElementById('btnMatrixFs')?.addEventListener('click', e => {
+    e.stopPropagation();
+    toggleMatrixFullscreen();
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && document.getElementById('matrixCard')?.classList.contains('is-fs')) {
+      setMatrixFullscreen(false);
+    }
+  });
+  window.addEventListener('resize', () => {
+    if (chartMzMatrix) {
+      try { chartMzMatrix.resize(); } catch (err) {}
+    }
+  });
 
   const sel = document.getElementById('selMz');
   sel.innerHTML = '';
