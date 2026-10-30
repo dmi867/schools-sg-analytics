@@ -269,11 +269,33 @@
   table.dense .exp-date { font-size: .68rem; color: hsl(var(--muted-foreground)); font-variant-numeric: tabular-nums; white-space: nowrap }
   table.dense .amt { font-weight: 600 }
   table.dense .pct { font-size: .68rem; color: hsl(var(--muted-foreground)) }
+  /* рост сметы — плохо (красное), снижение — хорошо (зелёное) */
   .amt.neg, .pct.neg { color: var(--err) }
   .amt.pos, .pct.pos { color: var(--ok) }
   tr.clickable { cursor: pointer }
   tr.clickable:hover { background: hsl(var(--muted)) }
   tr.row-active { background: rgba(31,134,130,.08) }
+  .obj-name-row { display: flex; align-items: flex-start; gap: .35rem }
+  .obj-name-row .obj-name { flex: 1; min-width: 0 }
+  .copy-btn {
+    flex-shrink: 0; margin-top: .1rem; width: 22px; height: 22px; padding: 0;
+    border: 1px solid transparent; border-radius: .35rem; background: transparent;
+    color: hsl(var(--muted-foreground)); cursor: pointer; font-size: .7rem; line-height: 1;
+    opacity: 0; transition: opacity .15s, background .15s, border-color .15s;
+  }
+  tr:hover .copy-btn, tr.row-active .copy-btn { opacity: .85 }
+  .copy-btn:hover { opacity: 1; background: hsl(var(--muted)); border-color: hsl(var(--border)); color: hsl(var(--foreground)) }
+  .copy-btn.ok { color: var(--ok); opacity: 1 }
+  .filter-tog {
+    display: inline-flex; align-items: center; gap: .4rem; height: 36px; padding: 0 .85rem;
+    border-radius: .5rem; border: 1px solid hsl(var(--border)); background: #fff;
+    font: 500 13px Inter, sans-serif; color: hsl(var(--foreground)); cursor: pointer;
+    user-select: none; white-space: nowrap;
+  }
+  .filter-tog input { accent-color: var(--teal); margin: 0 }
+  .filter-tog.on { border-color: hsl(var(--primary) / .45); background: rgba(31,134,130,.06); color: hsl(var(--primary)) }
+  .kpi .sub { margin: .15rem 0 0; font-size: .75rem; font-weight: 500; color: hsl(var(--muted-foreground)) }
+  .filter-dd[data-key="contractor"] .filter-menu { min-width: 320px; max-width: min(480px, 94vw) }
   .pill {
     display: inline-flex; align-items: center; font-size: .7rem; font-weight: 600;
     padding: 2px 8px; border-radius: 999px;
@@ -328,6 +350,10 @@
         <button type="button" class="filter-btn" id="btnCustomer">Заказчик <span class="caret">▾</span></button>
         <div class="filter-menu" id="menuCustomer" hidden></div>
       </div>
+      <div class="filter-dd" data-key="contractor">
+        <button type="button" class="filter-btn" id="btnContractor">Подрядчик <span class="caret">▾</span></button>
+        <div class="filter-menu" id="menuContractor" hidden></div>
+      </div>
       <div class="filter-dd" data-key="work">
         <button type="button" class="filter-btn" id="btnWork">Вид работ <span class="caret">▾</span></button>
         <div class="filter-menu" id="menuWork" hidden></div>
@@ -336,6 +362,9 @@
         <button type="button" class="filter-btn" id="btnStatus">Статус <span class="caret">▾</span></button>
         <div class="filter-menu" id="menuStatus" hidden></div>
       </div>
+      <label class="filter-tog" id="togSg" title="Скрыть объекты с нулевой стройготовностью">
+        <input type="checkbox" id="fltSgPos"> СГ &gt; 0
+      </label>
       <div class="filter-search">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
         <input id="fltSearch" type="search" placeholder="Поиск по объекту, подрядчику, УИН…" autocomplete="off">
@@ -351,8 +380,12 @@
   <div class="tabpanel stack" data-tab="summary">
   <div class="kpis">
     <div class="kpi"><p class="l">Объектов</p><p class="n" id="mzN">—</p></div>
+    <div class="kpi" title="СГ и оплата отличаются не больше чем на 10 п.п.">
+      <p class="l">В коридоре (±10 п.п.)</p>
+      <p class="n ok" id="mzCorr">—</p>
+      <p class="sub" id="mzCorrPct"></p>
+    </div>
     <div class="kpi"><p class="l">Медиана СГ, %</p><p class="n" id="mzMedSg">—</p></div>
-    <div class="kpi"><p class="l">Медиана оплаты, %</p><p class="n" id="mzMedPct">—</p></div>
     <div class="kpi"><p class="l">Кредитует подрядчик</p><p class="n warn" id="mzCredit">—</p></div>
   </div>
 
@@ -457,7 +490,7 @@
     <div class="card-hd">
       <div>
         <h2>Матрица риска: готовность vs оплата</h2>
-        <p>Снизу оплата, слева СГ. Зелёная полоса — коридор ±10 п.п. Клик по точке — траектория.</p>
+        <p id="mzMatrixNote">Снизу оплата, слева СГ. Зелёная полоса — коридор ±10 п.п. Клик по точке — только этот объект; клик по фону — снять фокус.</p>
       </div>
     </div>
     <div class="card-bd">
@@ -562,7 +595,8 @@ function bubbleRadius(contractMln) {
 }
 
 const MZ = DATA;
-let mzYears = ['2026'], mzCustomers = [], mzWorks = [], mzStatuses = [];
+let mzYears = ['2026'], mzCustomers = [], mzContractors = [], mzWorks = [], mzStatuses = [];
+let mzSgPos = false;
 let mzSearch = '', mzUin = null, mzFocusUin = null;
 let chartMzMatrix = null, chartMzTraj = null, chartQuad = null;
 
@@ -575,8 +609,7 @@ const WORK_OPTS = [
 const STATUS_OPTS = [
   { v: 'credit', l: 'Кредитует' },
   { v: 'over', l: 'Избыток оплаты' },
-  { v: 'balanced', l: 'Баланс' },
-  { v: 'sg', l: 'СГ > 0' },
+  { v: 'balanced', l: 'Баланс / коридор' },
   { v: 'exp', l: 'Есть экспертиза' },
   { v: 'noexp', l: 'Без экспертизы' },
 ];
@@ -590,7 +623,6 @@ function statusMatch(o, st) {
   if (st === 'credit') return o.money_status === 'credit';
   if (st === 'over') return o.money_status === 'over';
   if (st === 'balanced') return o.money_status === 'balanced';
-  if (st === 'sg') return o.sg > 0;
   if (st === 'exp') return !!(o.exp_done || o.exp_agreed_mln != null || o.exp_kind);
   if (st === 'noexp') return !(o.exp_done || o.exp_agreed_mln != null || o.exp_kind);
   return true;
@@ -598,8 +630,10 @@ function statusMatch(o, st) {
 function mzPass(o) {
   if (mzYears.length && !mzYears.includes(String(o.open_year || ''))) return false;
   if (mzCustomers.length && !mzCustomers.includes(o.customer || '')) return false;
+  if (mzContractors.length && !mzContractors.includes(o.contractor || '')) return false;
   if (mzWorks.length && !mzWorks.includes(o.bucket)) return false;
   if (mzStatuses.length && !mzStatuses.some(st => statusMatch(o, st))) return false;
+  if (mzSgPos && !(o.sg > 0)) return false;
   if (mzSearch) {
     const q = mzSearch.toLowerCase();
     const blob = [o.name, o.full, o.contractor, o.customer, o.ownership, o.work, o.uin, o.open_year]
@@ -607,6 +641,24 @@ function mzPass(o) {
     if (!blob.includes(q)) return false;
   }
   return true;
+}
+function copyText(text, btn) {
+  const t = String(text || '').trim();
+  if (!t) return;
+  const done = () => {
+    if (!btn) return;
+    btn.classList.add('ok');
+    btn.textContent = '✓';
+    setTimeout(() => { btn.classList.remove('ok'); btn.textContent = '⧉'; }, 900);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(t).then(done).catch(() => {});
+  } else {
+    const ta = document.createElement('textarea');
+    ta.value = t; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); done(); } catch (e) {}
+    ta.remove();
+  }
 }
 function expCellHtml(o) {
   const kind = EXP_KIND[o.exp_kind];
@@ -638,18 +690,42 @@ function toggleIn(arr, v) {
 }
 function mzFiltered() { return (MZ.objects || []).filter(mzPass); }
 
-function mzSelectObject(uin, { focus = false } = {}) {
+function mzSelectObject(uin, { focus = false, goObjects = false } = {}) {
   if (!uin) return;
   mzUin = uin;
   if (focus) mzFocusUin = uin;
   const sel = document.getElementById('selMz');
   if (sel) sel.value = mzUin;
-  drawMzTraj(mzUin);
+  if (goObjects) window.showTab('objects');
+  else {
+    drawMzTraj(mzUin);
+    renderMzMatrix();
+    renderMzTbl();
+  }
+}
+function clearMzFocus() {
+  if (!mzFocusUin) return;
+  mzFocusUin = null;
+  renderMzMatrix();
   renderMzTbl();
+  if (window.renderFilterChrome) window.renderFilterChrome();
 }
 
 function renderMzMatrix() {
-  const rows = mzFiltered().filter(o => o.sg != null && o.pct != null);
+  let rows = mzFiltered().filter(o => o.sg != null && o.pct != null);
+  const note = document.getElementById('mzMatrixNote');
+  if (mzFocusUin) {
+    const focused = rows.filter(o => o.uin === mzFocusUin);
+    if (focused.length) {
+      rows = focused;
+      const o = focused[0];
+      if (note) note.textContent = `Фокус: ${o.full || o.name}. Клик по фону матрицы — снять.`;
+    } else if (note) {
+      note.textContent = 'Выбранный объект вне текущего фильтра.';
+    }
+  } else if (note) {
+    note.textContent = 'Снизу оплата, слева СГ. Зелёная полоса — коридор ±10 п.п. Клик по точке — только этот объект; клик по фону — снять фокус.';
+  }
   const byStatus = { credit:[], over:[], balanced:[], unknown:[] };
   rows.forEach(o => (byStatus[o.money_status] || byStatus.unknown).push(o));
   const datasets = ['credit','balanced','over','unknown'].map(st => {
@@ -688,7 +764,7 @@ function renderMzMatrix() {
       },
       onClick(evt, els) {
         if (!els.length) {
-          if (mzFocusUin) { mzFocusUin = null; renderMzTbl(); }
+          clearMzFocus();
           return;
         }
         const d = chartMzMatrix.data.datasets[els[0].datasetIndex].data[els[0].index];
@@ -786,13 +862,20 @@ function fundTotals(rows) {
 }
 function renderSummaryKpis() {
   const rows = mzFiltered();
+  const withBoth = rows.filter(o => o.sg != null && o.pct != null);
   const sgs = rows.map(o => o.sg).filter(v => v != null);
-  const pcts = rows.map(o => o.pct).filter(v => v != null);
   const nCredit = rows.filter(o => o.money_status === 'credit').length;
-  const medSg = median(sgs), medPct = median(pcts);
+  const nCorr = withBoth.filter(o => o.money_status === 'balanced').length;
+  const medSg = median(sgs);
   document.getElementById('mzN').textContent = rows.length.toLocaleString('ru-RU');
+  document.getElementById('mzCorr').textContent = nCorr.toLocaleString('ru-RU');
+  const pctEl = document.getElementById('mzCorrPct');
+  if (pctEl) {
+    pctEl.textContent = withBoth.length
+      ? (Math.round(1000 * nCorr / withBoth.length) / 10) + '% от среза с СГ и оплатой'
+      : '';
+  }
   document.getElementById('mzMedSg').textContent = medSg != null ? medSg : '—';
-  document.getElementById('mzMedPct').textContent = medPct != null ? medPct : '—';
   document.getElementById('mzCredit').textContent = nCredit.toLocaleString('ru-RU');
 }
 function renderPortfolio() {
@@ -899,10 +982,11 @@ const quadCrossPlugin = {
 
 function openContractor(name) {
   if (!name || name === 'Без подрядчика') return;
-  const input = document.getElementById('fltSearch');
-  input.value = name;
-  mzSearch = name;
+  mzContractors = [name];
   mzFocusUin = null;
+  mzSearch = '';
+  const input = document.getElementById('fltSearch');
+  if (input) input.value = '';
   window.showTab('objects');
   if (window.refreshFilters) window.refreshFilters();
 }
@@ -1107,8 +1191,9 @@ const WORK_SHORT = {
   прочее: 'Прочее',
 };
 function objectRowHtml(o, { stayOnObjects = false } = {}) {
-  const active = o.uin === mzUin ? ' row-active' : '';
-  const ovCls = o.exp_overrun > 0 ? 'pos' : (o.exp_overrun < 0 ? 'neg' : '');
+  const active = o.uin === mzUin || o.uin === mzFocusUin ? ' row-active' : '';
+  // рост сметы (Δ>0) — красный, снижение — зелёный
+  const ovCls = o.exp_overrun > 0 ? 'neg' : (o.exp_overrun < 0 ? 'pos' : '');
   const deltaCell = o.exp_delta_mln != null
     ? `<div class="cell-stack end"><span class="amt ${ovCls}">${mlnFmt(o.exp_delta_mln, { signed: true })}</span>` +
       (o.exp_overrun!=null ? `<span class="pct ${ovCls}">${o.exp_overrun>0?'+':''}${o.exp_overrun}%</span>` : '') +
@@ -1127,9 +1212,13 @@ function objectRowHtml(o, { stayOnObjects = false } = {}) {
     o.ownership,
     o.contractor ? 'подрядчик: ' + o.contractor : '',
   ].filter(Boolean).join('\n');
+  const copyPayload = [(o.full || o.name || ''), o.uin].filter(Boolean).join(' · ');
   return `<tr class="clickable${active}" data-uin="${o.uin}" data-stay="${stayOnObjects ? '1' : '0'}">` +
     `<td class="obj" title="${esc(tipBits)}">` +
-      `<span class="obj-name">${esc(o.full || o.name)}</span>` +
+      `<div class="obj-name-row">` +
+        `<span class="obj-name">${esc(o.full || o.name)}</span>` +
+        `<button type="button" class="copy-btn" data-copy="${esc(copyPayload)}" title="Скопировать название и УИН">⧉</button>` +
+      `</div>` +
       (o.contractor ? `<span class="obj-sub" title="${esc(o.contractor)}">${esc(o.contractor)}</span>` : '') +
       `<span class="obj-uin">${esc(o.uin)}</span>` +
     `</td>` +
@@ -1147,22 +1236,28 @@ function objectRowHtml(o, { stayOnObjects = false } = {}) {
 function bindObjectRows(rootSel) {
   document.querySelectorAll(rootSel + ' tr.clickable').forEach(tr => {
     tr.onclick = () => {
-      mzUin = tr.dataset.uin;
-      mzFocusUin = null;
-      const sel = document.getElementById('selMz');
-      if (sel) sel.value = mzUin;
-      renderMzTbl();
+      mzSelectObject(tr.dataset.uin, {
+        focus: true,
+        goObjects: tr.dataset.stay !== '1',
+      });
       if (tr.dataset.stay === '1') {
-        drawMzTraj(mzUin);
         document.getElementById('cMzTraj')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      } else {
-        window.showTab('objects');
       }
+    };
+  });
+  document.querySelectorAll(rootSel + ' .copy-btn').forEach(btn => {
+    btn.onclick = e => {
+      e.stopPropagation();
+      copyText(btn.getAttribute('data-copy'), btn);
     };
   });
 }
 function renderMzTbl() {
-  const filtered = mzFiltered().slice().sort((a,b) => (b.sg||0)-(a.sg||0));
+  let filtered = mzFiltered().slice().sort((a,b) => (b.sg||0)-(a.sg||0));
+  if (mzFocusUin) {
+    const one = filtered.filter(o => o.uin === mzFocusUin);
+    if (one.length) filtered = one;
+  }
   const wrap = document.getElementById('mzTbl')?.closest('.tbl-wrap');
   document.getElementById('mzTbl').innerHTML =
     filtered.map(o => objectRowHtml(o)).join('') ||
@@ -1260,6 +1355,15 @@ function renderMzTbl() {
     return [...new Set(rows.map(o => o.customer))]
       .sort((a, b) => prettyCust(a).localeCompare(prettyCust(b), 'ru'));
   }
+  function contractorsForSelectedYears() {
+    const rows = MZ.objects.filter(o => {
+      if (!o.contractor) return false;
+      if (!mzYears.length) return true;
+      return mzYears.includes(String(o.open_year || ''));
+    });
+    return [...new Set(rows.map(o => o.contractor))]
+      .sort((a, b) => a.localeCompare(b, 'ru'));
+  }
 
   function fillCheckMenu(menu, opts, selected, onToggle) {
     if (!opts.length) {
@@ -1276,8 +1380,11 @@ function renderMzTbl() {
   }
   function syncMenus() {
     const custOpts = customersForSelectedYears();
-    const avail = new Set(custOpts);
-    mzCustomers = mzCustomers.filter(c => avail.has(c));
+    const ctrOpts = contractorsForSelectedYears();
+    const availC = new Set(custOpts);
+    const availT = new Set(ctrOpts);
+    mzCustomers = mzCustomers.filter(c => availC.has(c));
+    mzContractors = mzContractors.filter(c => availT.has(c));
     fillCheckMenu(
       document.getElementById('menuYear'),
       years.map(y => ({ v: y, l: y })),
@@ -1291,6 +1398,12 @@ function renderMzTbl() {
       v => { mzCustomers = toggleIn(mzCustomers.slice(), v); }
     );
     fillCheckMenu(
+      document.getElementById('menuContractor'),
+      ctrOpts.map(c => ({ v: c, l: c })),
+      mzContractors,
+      v => { mzContractors = toggleIn(mzContractors.slice(), v); }
+    );
+    fillCheckMenu(
       document.getElementById('menuWork'),
       WORK_OPTS,
       mzWorks,
@@ -1302,11 +1415,16 @@ function renderMzTbl() {
       mzStatuses,
       v => { mzStatuses = toggleIn(mzStatuses.slice(), v); }
     );
+    const sgInp = document.getElementById('fltSgPos');
+    const sgLab = document.getElementById('togSg');
+    if (sgInp) sgInp.checked = mzSgPos;
+    if (sgLab) sgLab.classList.toggle('on', mzSgPos);
   }
   window.renderFilterChrome = function renderFilterChrome() {
     const map = [
       ['btnYear', mzYears.length],
       ['btnCustomer', mzCustomers.length],
+      ['btnContractor', mzContractors.length],
       ['btnWork', mzWorks.length],
       ['btnStatus', mzStatuses.length],
     ];
@@ -1329,6 +1447,7 @@ function renderMzTbl() {
     const chips = [];
     mzYears.forEach(y => chips.push({ key: 'year', v: y, l: 'Год ' + y }));
     mzCustomers.forEach(c => chips.push({ key: 'customer', v: c, l: prettyCust(c) }));
+    mzContractors.forEach(c => chips.push({ key: 'contractor', v: c, l: c }));
     mzWorks.forEach(w => {
       const opt = WORK_OPTS.find(x => x.v === w);
       chips.push({ key: 'work', v: w, l: opt ? opt.l : w });
@@ -1337,6 +1456,11 @@ function renderMzTbl() {
       const opt = STATUS_OPTS.find(x => x.v === s);
       chips.push({ key: 'status', v: s, l: opt ? opt.l : s });
     });
+    if (mzSgPos) chips.push({ key: 'sgpos', v: '1', l: 'СГ > 0' });
+    if (mzFocusUin) {
+      const fo = MZ.objects.find(x => x.uin === mzFocusUin);
+      chips.push({ key: 'focus', v: mzFocusUin, l: 'Объект: ' + (fo ? (fo.name || fo.uin) : mzFocusUin) });
+    }
     if (mzSearch) chips.push({ key: 'search', v: mzSearch, l: '«' + mzSearch + '»' });
     const box = document.getElementById('filterChips');
     box.innerHTML = chips.map((c, i) =>
@@ -1349,8 +1473,15 @@ function renderMzTbl() {
         if (!c) return;
         if (c.key === 'year') mzYears = mzYears.filter(x => x !== c.v);
         if (c.key === 'customer') mzCustomers = mzCustomers.filter(x => x !== c.v);
+        if (c.key === 'contractor') mzContractors = mzContractors.filter(x => x !== c.v);
         if (c.key === 'work') mzWorks = mzWorks.filter(x => x !== c.v);
         if (c.key === 'status') mzStatuses = mzStatuses.filter(x => x !== c.v);
+        if (c.key === 'sgpos') {
+          mzSgPos = false;
+          const sgInp = document.getElementById('fltSgPos');
+          if (sgInp) sgInp.checked = false;
+        }
+        if (c.key === 'focus') { mzFocusUin = null; }
         if (c.key === 'search') {
           mzSearch = '';
           document.getElementById('fltSearch').value = '';
@@ -1362,7 +1493,8 @@ function renderMzTbl() {
     document.getElementById('filterMeta').textContent =
       n.toLocaleString('ru-RU') + ' из ' + MZ.objects.length.toLocaleString('ru-RU');
     const clear = document.getElementById('filterClear');
-    const dirty = mzYears.length || mzCustomers.length || mzWorks.length || mzStatuses.length || mzSearch;
+    const dirty = mzYears.length || mzCustomers.length || mzContractors.length || mzWorks.length
+      || mzStatuses.length || mzSearch || mzSgPos || mzFocusUin;
     clear.hidden = !dirty;
   };
   function closeMenus(except) {
@@ -1386,15 +1518,20 @@ function renderMzTbl() {
   }
   wireDropdown('btnYear', 'menuYear');
   wireDropdown('btnCustomer', 'menuCustomer');
+  wireDropdown('btnContractor', 'menuContractor');
   wireDropdown('btnWork', 'menuWork');
   wireDropdown('btnStatus', 'menuStatus');
   document.addEventListener('click', () => closeMenus());
   document.querySelectorAll('.filter-menu').forEach(m => {
     m.addEventListener('click', e => e.stopPropagation());
   });
+  document.getElementById('fltSgPos').onchange = e => {
+    mzSgPos = !!e.target.checked;
+    refreshFilters();
+  };
 
   function refreshFilters() {
-    mzFocusUin = null;
+    // фокус объекта не сбрасываем при снятии чипа focus — только при смене остальных фильтров
     syncMenus();
     renderSummaryKpis();
     renderPortfolio();
@@ -1407,10 +1544,15 @@ function renderMzTbl() {
   document.getElementById('filterClear').onclick = () => {
     mzYears = [];
     mzCustomers = [];
+    mzContractors = [];
     mzWorks = [];
     mzStatuses = [];
+    mzSgPos = false;
+    mzFocusUin = null;
     mzSearch = '';
     document.getElementById('fltSearch').value = '';
+    const sgInp = document.getElementById('fltSgPos');
+    if (sgInp) sgInp.checked = false;
     refreshFilters();
   };
   let searchTimer = null;
