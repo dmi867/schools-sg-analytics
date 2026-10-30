@@ -443,11 +443,11 @@ PAGE_BODY = r"""
           <th>Вид</th>
           <th class="r">Год</th>
           <th>Заказчик</th>
-          <th class="r" title="млн руб.">Лимит, млн</th>
-          <th class="r" title="млн руб.">Контракт, млн</th>
+          <th class="r">Лимит, млн руб.</th>
+          <th class="r">Контракт, млн руб.</th>
           <th class="r">СГ</th><th class="r">Оплата</th>
-          <th class="r" title="Согласованная смета после экспертизы, млн руб.">После эксп.</th>
-          <th class="r" title="Изменение сметы, млн руб.">Δ сметы</th>
+          <th class="r" title="Согласованная смета после экспертизы">После эксп., млн руб.</th>
+          <th class="r" title="Изменение сметы">Δ сметы, млн руб.</th>
           <th title="ТЧ — техчасть, СД — смета">Экспертиза</th>
           <th>Статус</th>
         </tr></thead>
@@ -468,8 +468,8 @@ PAGE_BODY = r"""
     <div class="kpi" title="Подрядчики в квадранте «Аванс»: средняя оплата ≥ порога, средняя СГ ниже порога">
       <p class="l">Аванс впереди работ</p><p class="n" id="cAdvance">—</p>
     </div>
-    <div class="kpi" title="Сумма лимитов объектов у подрядчиков в срезе">
-      <p class="l">Лимит в срезе</p><p class="n" id="cLimit">—</p>
+    <div class="kpi" title="Сумма лимитов объектов у подрядчиков в срезе, млн руб.">
+      <p class="l">Лимит в срезе, млн руб.</p><p class="n" id="cLimit">—</p>
     </div>
   </div>
 
@@ -502,11 +502,11 @@ PAGE_BODY = r"""
         <thead><tr>
           <th>Подрядчик</th>
           <th class="r">Объектов</th>
-          <th class="r" title="Сумма лимитов объектов, млн руб.">Лимит, млн</th>
+          <th class="r" title="Сумма лимитов объектов">Лимит, млн руб.</th>
           <th class="r" title="Средняя стройготовность, взвешенная по лимиту">СГ ср., %</th>
           <th class="r" title="Средний % оплаты, взвешенный по лимиту">Оплата ср., %</th>
           <th class="r" title="Число объектов, где СГ заметно выше оплаты (подрядчик кредитует)">Кредитует</th>
-          <th class="r" title="Сумма рублёвого разрыва на объектах с кредитованием, млн руб.">Разрыв, млн</th>
+          <th class="r" title="Сумма рублёвого разрыва на объектах с кредитованием">Разрыв, млн руб.</th>
           <th title="Квадрант относительно порогов СГ и оплаты">Группа</th>
         </tr></thead>
         <tbody id="contrTbl"></tbody>
@@ -542,11 +542,11 @@ PAGE_BODY = r"""
           <th>Вид</th>
           <th class="r">Год</th>
           <th>Заказчик</th>
-          <th class="r" title="млн руб.">Лимит, млн</th>
-          <th class="r" title="млн руб.">Контракт, млн</th>
+          <th class="r">Лимит, млн руб.</th>
+          <th class="r">Контракт, млн руб.</th>
           <th class="r">СГ</th><th class="r">Оплата</th>
-          <th class="r" title="После экспертизы, млн руб.">После эксп.</th>
-          <th class="r" title="Изменение сметы, млн руб.">Δ сметы</th>
+          <th class="r" title="После экспертизы">После эксп., млн руб.</th>
+          <th class="r" title="Изменение сметы">Δ сметы, млн руб.</th>
           <th>Экспертиза</th>
           <th>Статус</th>
         </tr></thead>
@@ -787,7 +787,7 @@ function renderMzMatrix() {
         datalabels: { display: false },
         tooltip: { callbacks: { label(ctx) {
           const d = ctx.raw;
-          return `${d.name}: СГ ${d.y}% · оплата ${d.x}% · лимит ${mlnFmt(d.limit)} · контракт ${mlnFmt(d.contract)} млн`;
+          return `${d.name}: СГ ${d.y}% · оплата ${d.x}% · лимит ${rub(d.limit)} · контракт ${rub(d.contract)}`;
         }}},
       },
       scales: {
@@ -864,16 +864,21 @@ function markEvents(marks) {
 
 const FUND_LABEL = { fed:'Федеральный', mo:'Бюджет МО', mun:'Муниципальный', ibk:'ИБК', kik:'КИК' };
 
-/** Сумма в млн руб., всегда с 2 знаками: 1,00 / 70 402,00 */
-function mlnFmt(v, { signed = false } = {}) {
-  if (v == null || !isFinite(v)) return '—';
+/** Сумма в млн руб.: всегда вид 0 000,00 (неразрывный пробел + запятая). */
+function mlnFmt(v, { signed = false, unit = false } = {}) {
+  if (v == null || v === '' || !isFinite(Number(v))) return '—';
   const n = Number(v);
-  const sign = signed && n > 0 ? '+' : '';
-  return sign + n.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const abs = Math.abs(n);
+  const [intPart, frac] = abs.toFixed(2).split('.');
+  const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, '\u00a0');
+  let s = grouped + ',' + frac;
+  if (n < 0) s = '−' + s;
+  else if (signed && n > 0) s = '+' + s;
+  if (unit) s += ' млн руб.';
+  return s;
 }
-function rub(v) {
-  const s = mlnFmt(v);
-  return s === '—' ? s : s + ' млн';
+function rub(v, opts) {
+  return mlnFmt(v, Object.assign({ unit: true }, opts || {}));
 }
 function esc(s) {
   return String(s ?? '').replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
@@ -927,8 +932,8 @@ function renderPortfolio() {
   ];
   document.getElementById('mzBudget').innerHTML = tiles.map(t =>
     `<div class="kpi money"><p class="l">${t.l} · ${t.n === 1 ? '1 объект' : t.n + ' объектов'}</p>` +
-    `<p class="pair"><span>Лимиты</span><b>${rub(t.plan)}</b></p>` +
-    `<p class="pair"><span>Доведено</span><b>${rub(t.fact)}</b></p></div>`
+    `<p class="pair"><span>Лимиты, млн руб.</span><b>${mlnFmt(t.plan)}</b></p>` +
+    `<p class="pair"><span>Доведено, млн руб.</span><b>${mlnFmt(t.fact)}</b></p></div>`
   ).join('');
 }
 
@@ -1053,7 +1058,7 @@ function renderQuad() {
   document.getElementById('cN').textContent = named.length.toLocaleString('ru-RU');
   document.getElementById('cCredit').textContent = nCreditObj.toLocaleString('ru-RU');
   document.getElementById('cAdvance').textContent = (counts.advance || 0).toLocaleString('ru-RU');
-  document.getElementById('cLimit').textContent = rub(limitSum);
+  document.getElementById('cLimit').textContent = mlnFmt(limitSum);
 
   document.getElementById('quadCards').innerHTML = Object.keys(QUAD_META).map(k => {
     const m = QUAD_META[k];
@@ -1129,9 +1134,9 @@ function drawMzTraj(uin) {
   const bits = [];
   if (o.exp_agreed_mln != null) {
     const dlt = o.exp_delta_mln != null
-      ? ` (${mlnFmt(o.exp_delta_mln, { signed: true })} млн` + (o.exp_overrun!=null ? `, ${o.exp_overrun>0?'+':''}${o.exp_overrun}%` : '') + ')'
+      ? ` (${rub(o.exp_delta_mln, { signed: true })}` + (o.exp_overrun!=null ? `, ${o.exp_overrun>0?'+':''}${o.exp_overrun}%` : '') + ')'
       : '';
-    bits.push(`смета после эксп. ${mlnFmt(o.exp_agreed_mln)} млн${dlt}`);
+    bits.push(`смета после эксп. ${rub(o.exp_agreed_mln)}${dlt}`);
   }
   if (o.exp_done) bits.push(`эксп. ${o.exp_done}`);
   else if (o.exp_in) bits.push(`заход на эксп. ${o.exp_in}`);
